@@ -1,0 +1,11 @@
+{
+  "verdict": "warning",
+  "confidence": 0.82,
+  "files": [
+    {
+      "file": "src/billing.py",
+      "verdict": "fail",
+      "reason": "New discount logic on lines 10-20 has no test for negative amount edge case"
+    }
+  ]
+}
