@@ -5,11 +5,12 @@ from __future__ import annotations
 # pyright: reportUnknownMemberType=false
 import re
 import sys
+import traceback
 
 import requests as http_requests
 
 from src.config import Config, parse_config
-from src.github_client import report_to_github
+from src.github_client import format_report, report_to_github
 from src.layer1_coverage import run_layer1
 from src.layer2_heuristic import run_layer2
 from src.layer3_ai import run_layer3
@@ -129,7 +130,12 @@ def run_pipeline(config: Config) -> Report:
 
 def main() -> None:
     """Entry point for the GitHub Action."""
-    config = parse_config()
+    try:
+        config = parse_config()
+    except Exception:
+        print("::error::Failed to parse configuration.")
+        traceback.print_exc()
+        sys.exit(1)
 
     if config.event_name != "pull_request":
         print("::notice::test-guard only runs on pull_request events. Skipping.")
@@ -139,9 +145,15 @@ def main() -> None:
         print("::error::Could not determine PR number from GITHUB_REF.")
         sys.exit(1)
 
-    report = run_pipeline(config)
+    try:
+        report = run_pipeline(config)
+    except Exception:
+        print("::error::Pipeline failed with an unexpected error.")
+        traceback.print_exc()
+        sys.exit(1)
 
-    # Set exit code based on verdict
+    print(format_report(report))
+
     if report.overall_verdict == Verdict.FAIL:
         print("::error::Test adequacy check FAILED.")
         sys.exit(1)

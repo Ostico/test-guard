@@ -58,7 +58,7 @@ def post_comment(
 ) -> None:
     """Post or update a comment on a PR."""
     url = f"{_GITHUB_API}/repos/{repo}/issues/{pr_number}/comments"
-    requests.post(
+    resp = requests.post(
         url,
         headers={
             "Authorization": f"Bearer {token}",
@@ -68,6 +68,8 @@ def post_comment(
         json={"body": body},
         timeout=30,
     )
+    if not resp.ok:
+        print(f"::warning::Failed to post PR comment ({resp.status_code}): {resp.text[:200]}")
 
 
 def post_status(
@@ -79,7 +81,7 @@ def post_status(
 ) -> None:
     """Post a commit status check."""
     url = f"{_GITHUB_API}/repos/{repo}/statuses/{sha}"
-    requests.post(
+    resp = requests.post(
         url,
         headers={
             "Authorization": f"Bearer {token}",
@@ -93,6 +95,8 @@ def post_status(
         },
         timeout=30,
     )
+    if not resp.ok:
+        print(f"::warning::Failed to post commit status ({resp.status_code}): {resp.text[:200]}")
 
 
 def report_to_github(
