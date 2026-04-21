@@ -55,6 +55,7 @@ permissions:
   contents: read
   pull-requests: write
   statuses: write
+  models: read
 
 jobs:
   test-guard:
@@ -74,6 +75,9 @@ jobs:
 ```
 
 No API keys needed. Uses `GITHUB_TOKEN` for everything.
+
+> **Required**: `models: read` permission is mandatory when AI is enabled (the default).
+> Without it, Layer 3 will get a 403 error. If you set `ai-enabled: 'false'`, you can omit it.
 
 ## Inputs
 
