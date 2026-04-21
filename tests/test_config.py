@@ -1,8 +1,8 @@
 """Tests for configuration parsing."""
-import os
 
 import pytest
-from src.config import Config, parse_config
+
+from src.config import parse_config
 
 
 class TestParseConfig:

@@ -4,6 +4,7 @@ Checks if changed source files have corresponding test files.
 Classifies each file as PASS (test modified), WARNING (test exists, not modified),
 FAIL (no test found), or SKIP (excluded).
 """
+
 from __future__ import annotations
 
 import fnmatch
@@ -56,7 +57,6 @@ def _match_test_file(
 
     source_path = PurePosixPath(source_file)
     source_name = source_path.stem
-    source_ext = source_path.suffix
 
     for _lang, mapping in patterns.items():
         src_pattern = mapping["src_pattern"]
@@ -109,27 +109,33 @@ def run_layer2(
         test_file = _match_test_file(filepath, all_repo_files, patterns)
 
         if test_file is None:
-            file_verdicts.append(FileVerdict(
-                file=filepath,
-                verdict=Verdict.FAIL,
-                reason="No matching test file found",
-                layer="layer2",
-            ))
+            file_verdicts.append(
+                FileVerdict(
+                    file=filepath,
+                    verdict=Verdict.FAIL,
+                    reason="No matching test file found",
+                    layer="layer2",
+                )
+            )
         elif test_file in changed_set:
-            file_verdicts.append(FileVerdict(
-                file=filepath,
-                verdict=Verdict.PASS,
-                reason=f"Test file modified in PR: {test_file}",
-                layer="layer2",
-            ))
+            file_verdicts.append(
+                FileVerdict(
+                    file=filepath,
+                    verdict=Verdict.PASS,
+                    reason=f"Test file modified in PR: {test_file}",
+                    layer="layer2",
+                )
+            )
         else:
             # Test exists but wasn't modified — ambiguous
-            file_verdicts.append(FileVerdict(
-                file=filepath,
-                verdict=Verdict.WARNING,
-                reason=f"Test file exists ({test_file}) but was not modified in this PR",
-                layer="layer2",
-            ))
+            file_verdicts.append(
+                FileVerdict(
+                    file=filepath,
+                    verdict=Verdict.WARNING,
+                    reason=f"Test file exists ({test_file}) but was not modified in this PR",
+                    layer="layer2",
+                )
+            )
 
     # Determine overall verdict
     verdicts = [fv.verdict for fv in file_verdicts]
@@ -147,7 +153,11 @@ def run_layer2(
         count = verdicts.count(v)
         if count:
             details_parts.append(f"{count} {v.value}")
-    details = f"File matching: {', '.join(details_parts)}" if details_parts else "No source files to check"
+    details = (
+        f"File matching: {', '.join(details_parts)}"
+        if details_parts
+        else "No source files to check"
+    )
 
     return LayerResult(
         layer="layer2",

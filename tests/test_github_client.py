@@ -1,35 +1,61 @@
 """Tests for GitHub client — PR comments and status checks."""
+
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+
 from src.github_client import format_report, post_comment, post_status
 from src.models import FileVerdict, LayerResult, Report, Verdict
 
 
 @pytest.fixture
 def sample_report() -> Report:
-    return Report(layers=[
-        LayerResult(
-            layer="layer1",
-            verdict=Verdict.PASS,
-            details="Changed lines: 92% covered (threshold: 80%)",
-            file_verdicts=[],
-            short_circuit=True,
-        ),
-    ])
+    return Report(
+        layers=[
+            LayerResult(
+                layer="layer1",
+                verdict=Verdict.PASS,
+                details="Changed lines: 92% covered (threshold: 80%)",
+                file_verdicts=[],
+                short_circuit=True,
+            ),
+        ]
+    )
 
 
 @pytest.fixture
 def full_report() -> Report:
-    return Report(layers=[
-        LayerResult("layer1", Verdict.FAIL, "Changed lines: 45% (threshold: 80%)", [], False),
-        LayerResult("layer2", Verdict.FAIL, "File matching: 1 pass, 1 fail", [
-            FileVerdict("src/auth.py", Verdict.PASS, "Test modified: tests/test_auth.py", "layer2"),
-            FileVerdict("src/billing.py", Verdict.FAIL, "No matching test file", "layer2"),
-        ], False),
-        LayerResult("layer3", Verdict.WARNING, "AI verdict: warning (confidence: 82%)", [
-            FileVerdict("src/billing.py", Verdict.FAIL, "No edge case test for negatives", "layer3"),
-        ], False),
-    ])
+    return Report(
+        layers=[
+            LayerResult("layer1", Verdict.FAIL, "Changed lines: 45% (threshold: 80%)", [], False),
+            LayerResult(
+                "layer2",
+                Verdict.FAIL,
+                "File matching: 1 pass, 1 fail",
+                [
+                    FileVerdict(
+                        "src/auth.py", Verdict.PASS, "Test modified: tests/test_auth.py", "layer2"
+                    ),
+                    FileVerdict("src/billing.py", Verdict.FAIL, "No matching test file", "layer2"),
+                ],
+                False,
+            ),
+            LayerResult(
+                "layer3",
+                Verdict.WARNING,
+                "AI verdict: warning (confidence: 82%)",
+                [
+                    FileVerdict(
+                        "src/billing.py",
+                        Verdict.FAIL,
+                        "No edge case test for negatives",
+                        "layer3",
+                    ),
+                ],
+                False,
+            ),
+        ]
+    )
 
 
 class TestFormatReport:

@@ -3,11 +3,11 @@
 Computes test coverage on changed/new lines using diff-cover.
 If coverage >= threshold, short-circuit with PASS.
 """
+
 from __future__ import annotations
 
-import subprocess
 import json
-import os
+import subprocess
 from pathlib import Path
 
 from src.models import LayerResult, Verdict
@@ -24,7 +24,8 @@ def _compute_diff_coverage(coverage_file: str) -> float:
             [
                 "diff-cover",
                 coverage_file,
-                "--json-report", "/dev/stdout",
+                "--json-report",
+                "/dev/stdout",
                 "--quiet",
             ],
             capture_output=True,

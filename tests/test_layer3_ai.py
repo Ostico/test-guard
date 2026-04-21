@@ -1,8 +1,9 @@
 """Tests for Layer 3 — GPT-5-mini AI judgment."""
+
 import json
 from unittest.mock import MagicMock, patch
 
-from src.layer3_ai import run_layer3, _build_prompt, _parse_ai_response
+from src.layer3_ai import _build_prompt, _parse_ai_response, run_layer3
 from src.models import Verdict
 
 
@@ -28,13 +29,15 @@ class TestBuildPrompt:
 
 class TestParseAiResponse:
     def test_valid_response(self):
-        raw = json.dumps({
-            "verdict": "warning",
-            "confidence": 0.82,
-            "files": [
-                {"file": "src/billing.py", "verdict": "fail", "reason": "No edge case test"},
-            ],
-        })
+        raw = json.dumps(
+            {
+                "verdict": "warning",
+                "confidence": 0.82,
+                "files": [
+                    {"file": "src/billing.py", "verdict": "fail", "reason": "No edge case test"},
+                ],
+            }
+        )
         verdict, confidence, file_verdicts = _parse_ai_response(raw)
         assert verdict == Verdict.WARNING
         assert confidence == 0.82
@@ -47,11 +50,13 @@ class TestParseAiResponse:
         assert confidence == 0.0
 
     def test_unexpected_verdict_maps_to_skip(self):
-        raw = json.dumps({
-            "verdict": "maybe",
-            "confidence": 0.9,
-            "files": [],
-        })
+        raw = json.dumps(
+            {
+                "verdict": "maybe",
+                "confidence": 0.9,
+                "files": [],
+            }
+        )
         verdict, confidence, file_verdicts = _parse_ai_response(raw)
         assert verdict == Verdict.SKIP
         assert confidence == 0.9
@@ -61,13 +66,15 @@ class TestParseAiResponse:
 class TestRunLayer3:
     @patch("src.layer3_ai._call_github_models")
     def test_pass_with_high_confidence(self, mock_call: MagicMock):
-        mock_call.return_value = json.dumps({
-            "verdict": "pass",
-            "confidence": 0.95,
-            "files": [
-                {"file": "src/auth.py", "verdict": "pass", "reason": "Well tested"},
-            ],
-        })
+        mock_call.return_value = json.dumps(
+            {
+                "verdict": "pass",
+                "confidence": 0.95,
+                "files": [
+                    {"file": "src/auth.py", "verdict": "pass", "reason": "Well tested"},
+                ],
+            }
+        )
         result = run_layer3(
             file_diffs={"src/auth.py": "+ new_code"},
             test_contents={"tests/test_auth.py": "def test(): ..."},
@@ -79,13 +86,15 @@ class TestRunLayer3:
 
     @patch("src.layer3_ai._call_github_models")
     def test_low_confidence_becomes_warning(self, mock_call: MagicMock):
-        mock_call.return_value = json.dumps({
-            "verdict": "fail",
-            "confidence": 0.4,
-            "files": [
-                {"file": "src/auth.py", "verdict": "fail", "reason": "Maybe missing"},
-            ],
-        })
+        mock_call.return_value = json.dumps(
+            {
+                "verdict": "fail",
+                "confidence": 0.4,
+                "files": [
+                    {"file": "src/auth.py", "verdict": "fail", "reason": "Maybe missing"},
+                ],
+            }
+        )
         result = run_layer3(
             file_diffs={"src/auth.py": "+ code"},
             test_contents={},

@@ -1,6 +1,6 @@
 """Tests for shared data models."""
-import pytest
-from src.models import FileVerdict, LayerResult, Verdict, Report
+
+from src.models import FileVerdict, LayerResult, Report, Verdict
 
 
 class TestFileVerdict:
@@ -58,9 +58,15 @@ class TestReport:
     def test_overall_verdict_fail_when_any_fail(self):
         layers = [
             LayerResult("layer1", Verdict.FAIL, "Low", [], False),
-            LayerResult("layer2", Verdict.FAIL, "Missing", [
-                FileVerdict("src/x.py", Verdict.FAIL, "No test", "layer2"),
-            ], False),
+            LayerResult(
+                "layer2",
+                Verdict.FAIL,
+                "Missing",
+                [
+                    FileVerdict("src/x.py", Verdict.FAIL, "No test", "layer2"),
+                ],
+                False,
+            ),
         ]
         report = Report(layers=layers)
         assert report.overall_verdict == Verdict.FAIL

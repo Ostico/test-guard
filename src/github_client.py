@@ -1,4 +1,5 @@
 """GitHub API client for PR comments and commit status checks."""
+
 from __future__ import annotations
 
 import requests
@@ -26,7 +27,7 @@ def format_report(report: Report) -> str:
     """Format a Report as a Markdown PR comment."""
     emoji = _VERDICT_EMOJI[report.overall_verdict]
     lines = [
-        f"## 🧪 Test Guard Report",
+        "## 🧪 Test Guard Report",
         "",
     ]
 

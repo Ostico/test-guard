@@ -1,8 +1,8 @@
 """Main orchestrator — runs the 3-layer pipeline."""
+
 from __future__ import annotations
 
-# pyright: reportAny=false
-
+# pyright: reportUnknownMemberType=false
 import re
 import sys
 
@@ -98,7 +98,9 @@ def run_pipeline(config: Config) -> Report:
             if match:
                 test_path = match.group(1)
                 try:
-                    content_url = f"{_GITHUB_API}/repos/{config.repo}/contents/{test_path}?ref={head_sha}"
+                    content_url = (
+                        f"{_GITHUB_API}/repos/{config.repo}/contents/{test_path}?ref={head_sha}"
+                    )
                     resp = http_requests.get(
                         content_url,
                         headers={
@@ -109,8 +111,8 @@ def run_pipeline(config: Config) -> Report:
                     )
                     if resp.ok:
                         test_contents[test_path] = resp.text
-                except Exception:
-                    pass
+                except Exception:  # noqa: S110
+                    pass  # Best-effort fetch; failure is non-critical
 
     l3 = run_layer3(
         ai_diffs,

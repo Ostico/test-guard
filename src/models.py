@@ -1,4 +1,5 @@
 """Shared data models for test-guard."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

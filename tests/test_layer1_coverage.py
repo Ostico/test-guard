@@ -1,6 +1,7 @@
 """Tests for Layer 1 — diff-coverage gate."""
-import pytest
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import patch
+
 from src.layer1_coverage import run_layer1
 from src.models import Verdict
 
@@ -15,9 +16,7 @@ class TestRunLayer1:
     def test_skip_when_coverage_file_missing(self, tmp_path):
         """Layer 1 returns SKIP when coverage file doesn't exist on disk."""
         fake_path = str(tmp_path / "nonexistent.xml")
-        result = run_layer1(
-            coverage_file=fake_path, threshold=80, diff_files=["src/foo.py"]
-        )
+        result = run_layer1(coverage_file=fake_path, threshold=80, diff_files=["src/foo.py"])
         assert result.verdict == Verdict.SKIP
 
     @patch("src.layer1_coverage._compute_diff_coverage")

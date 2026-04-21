@@ -1,4 +1,5 @@
 """Shared test fixtures."""
+
 import json
 from pathlib import Path
 
@@ -25,6 +26,4 @@ def sample_changed_files() -> list[str]:
 
 @pytest.fixture
 def sample_ai_response() -> dict:
-    return json.loads(
-        (FIXTURES_DIR / "sample_ai_response.json").read_text()
-    )
+    return json.loads((FIXTURES_DIR / "sample_ai_response.json").read_text())

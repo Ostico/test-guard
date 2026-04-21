@@ -1,12 +1,13 @@
 """Tests for main orchestrator."""
-# pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedParameter=false, reportUnknownArgumentType=false, reportUnknownMemberType=false
+# pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false
 
-import pytest
 from unittest.mock import patch
 
+import pytest
+
+from src.config import Config
 from src.main import run_pipeline
 from src.models import LayerResult, Verdict
-from src.config import Config
 
 
 @pytest.fixture
@@ -18,7 +19,9 @@ def base_config():
         event_name="pull_request",
         coverage_file=None,
         coverage_threshold=80,
-        test_patterns={"python": {"src_pattern": "**/*.py", "test_template": "tests/test_{name}.py"}},
+        test_patterns={
+            "python": {"src_pattern": "**/*.py", "test_template": "tests/test_{name}.py"},
+        },
         exclude_patterns=["*.md"],
         ai_enabled=True,
         ai_model="openai/gpt-5-mini",
@@ -31,7 +34,12 @@ class TestRunPipeline:
     @patch("src.main.run_layer1")
     @patch("src.main.report_to_github")
     def test_layer1_pass_short_circuits(self, mock_report, mock_l1, mock_ctx, base_config):
-        mock_ctx.return_value = (["src/auth.py"], ["src/auth.py", "tests/test_auth.py"], "sha123", {})
+        mock_ctx.return_value = (
+            ["src/auth.py"],
+            ["src/auth.py", "tests/test_auth.py"],
+            "sha123",
+            {},
+        )
         mock_l1.return_value = LayerResult("layer1", Verdict.PASS, "92%", [], True)
 
         report = run_pipeline(base_config)

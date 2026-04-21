@@ -3,6 +3,7 @@
 Only invoked for files that Layer 2 flagged as FAIL or WARNING.
 Sends focused diffs + test content and gets structured JSON verdict.
 """
+
 from __future__ import annotations
 
 import json
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 from src.models import FileVerdict, LayerResult, Verdict
 
@@ -45,7 +47,8 @@ def _build_prompt(
 
         # Find matching test content
         matching_tests = [
-            (tf, tc) for tf, tc in test_contents.items()
+            (tf, tc)
+            for tf, tc in test_contents.items()
             if filepath.split("/")[-1].replace(".py", "") in tf
             or filepath.split("/")[-1].replace(".php", "") in tf
             or filepath.split("/")[-1].replace(".ts", "") in tf
@@ -77,12 +80,13 @@ def _call_github_models(
         base_url="https://models.github.ai/inference",
         api_key=token,
     )
+    messages: list[ChatCompletionMessageParam] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
     response = client.chat.completions.create(
         model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        messages=messages,
         temperature=0.1,
         max_tokens=2048,
         response_format={
@@ -144,12 +148,14 @@ def _parse_ai_response(
     file_verdicts = []
     for f in data["files"]:
         fv_verdict = verdict_map.get(f["verdict"], Verdict.SKIP)
-        file_verdicts.append(FileVerdict(
-            file=f["file"],
-            verdict=fv_verdict,
-            reason=f["reason"],
-            layer="layer3",
-        ))
+        file_verdicts.append(
+            FileVerdict(
+                file=f["file"],
+                verdict=fv_verdict,
+                reason=f["reason"],
+                layer="layer3",
+            )
+        )
 
     return verdict, confidence, file_verdicts
 

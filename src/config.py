@@ -1,28 +1,35 @@
 """Configuration parsing from GitHub Actions inputs (environment variables)."""
+
 from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import overload
 
 # GitHub Actions passes inputs as INPUT_<NAME> env vars (uppercased, hyphens kept).
-_DEFAULT_EXCLUDE = "*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,migrations/**,docs/**,*.sql"
+_DEFAULT_EXCLUDE = (
+    "*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,migrations/**,docs/**,*.sql"
+)
 
 _DEFAULT_TEST_PATTERNS = {
     # source_glob -> test_template
     # {dir} = parent dir, {name} = filename without ext, {ext} = extension
     "python": {"src_pattern": "**/*.py", "test_template": "tests/test_{name}.py"},
-    "php":    {"src_pattern": "**/*.php", "test_template": "tests/{name}Test.php"},
-    "js":     {"src_pattern": "**/*.js",  "test_template": "**/{name}.test.js"},
-    "ts":     {"src_pattern": "**/*.ts",  "test_template": "**/{name}.test.ts"},
-    "go":     {"src_pattern": "**/*.go",  "test_template": "**/{name}_test.go"},
-    "java":   {"src_pattern": "**/*.java","test_template": "**/{name}Test.java"},
+    "php": {"src_pattern": "**/*.php", "test_template": "tests/{name}Test.php"},
+    "js": {"src_pattern": "**/*.js", "test_template": "**/{name}.test.js"},
+    "ts": {"src_pattern": "**/*.ts", "test_template": "**/{name}.test.ts"},
+    "go": {"src_pattern": "**/*.go", "test_template": "**/{name}_test.go"},
+    "java": {"src_pattern": "**/*.java", "test_template": "**/{name}Test.java"},
 }
 
 
+@overload
+def _env(name: str, default: str) -> str: ...
+@overload
+def _env(name: str, default: None = None) -> str | None: ...
 def _env(name: str, default: str | None = None) -> str | None:
     """Read a GitHub Actions input or regular env var."""
-    # Actions inputs: INPUT_COVERAGE-FILE -> os.environ["INPUT_COVERAGE-FILE"]
     return os.environ.get(f"INPUT_{name.upper()}", os.environ.get(name.upper(), default))
 
 
@@ -74,15 +81,13 @@ def parse_config() -> Config:
     coverage_file = _env("COVERAGE-FILE")
     threshold_raw = _env("COVERAGE-THRESHOLD", "80")
     try:
-        coverage_threshold = int(threshold_raw)  # type: ignore[arg-type]
-    except (ValueError, TypeError):
-        raise ValueError(
-            f"coverage-threshold must be an integer, got: {threshold_raw!r}"
-        )
+        coverage_threshold = int(threshold_raw)
+    except (ValueError, TypeError) as err:
+        raise ValueError(f"coverage-threshold must be an integer, got: {threshold_raw!r}") from err
 
     # Layer 2
     exclude_raw = _env("EXCLUDE-PATTERNS", _DEFAULT_EXCLUDE)
-    exclude_patterns = [p.strip() for p in exclude_raw.split(",") if p.strip()]  # type: ignore[union-attr]
+    exclude_patterns = [p.strip() for p in exclude_raw.split(",") if p.strip()]
 
     test_patterns_raw = _env("TEST-PATTERNS", "auto")
     if test_patterns_raw == "auto":
@@ -92,15 +97,15 @@ def parse_config() -> Config:
         test_patterns = _DEFAULT_TEST_PATTERNS
 
     # Layer 3
-    ai_enabled = _env("AI-ENABLED", "true").lower() in ("true", "1", "yes")  # type: ignore[union-attr]
-    ai_model = _env("AI-MODEL", "openai/gpt-5-mini")  # type: ignore[arg-type]
+    ai_enabled = _env("AI-ENABLED", "true").lower() in ("true", "1", "yes")
+    ai_model = _env("AI-MODEL", "openai/gpt-5-mini")
     confidence_raw = _env("AI-CONFIDENCE-THRESHOLD", "0.7")
     try:
-        ai_confidence_threshold = float(confidence_raw)  # type: ignore[arg-type]
-    except (ValueError, TypeError):
+        ai_confidence_threshold = float(confidence_raw)
+    except (ValueError, TypeError) as err:
         raise ValueError(
             f"ai-confidence-threshold must be a float, got: {confidence_raw!r}"
-        )
+        ) from err
 
     return Config(
         github_token=github_token,
