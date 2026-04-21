@@ -1,7 +1,7 @@
 # action.yml
 name: 'Test Guard'
 description: 'Hybrid PR test adequacy gate — coverage + heuristics + AI'
-author: 'your-org'
+author: 'ostico'
 
 branding:
   icon: 'shield'
@@ -9,7 +9,7 @@ branding:
 
 inputs:
   coverage-file:
-    description: 'Path to coverage report (cobertura XML, lcov, etc.). Optional — Layer 1 skips if not provided.'
+    description: 'Path to coverage report (Cobertura XML, Clover XML, JaCoCo XML, or LCOV). Optional — Layer 1 skips if not provided.'
     required: false
   coverage-threshold:
     description: 'Minimum diff-coverage % to auto-pass (0-100).'
