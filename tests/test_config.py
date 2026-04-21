@@ -1,3 +1,4 @@
+# pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownMemberType=false
 """Tests for configuration parsing."""
 
 import pytest

@@ -12,6 +12,8 @@ from typing import TypedDict, cast
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
+from openai.types.shared_params import ResponseFormatJSONSchema
+from openai.types.shared_params.response_format_json_schema import JSONSchema
 
 from src.models import FileVerdict, LayerResult, Verdict
 
@@ -80,6 +82,34 @@ def _call_github_models(
         base_url="https://models.github.ai/inference",
         api_key=token,
     )
+    _VERDICT_SCHEMA: dict[str, object] = {
+        "type": "object",
+        "required": ["verdict", "confidence", "files"],
+        "additionalProperties": False,
+        "properties": {
+            "verdict": {
+                "type": "string",
+                "enum": ["pass", "fail", "warning"],
+            },
+            "confidence": {"type": "number"},
+            "files": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["file", "verdict", "reason"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "file": {"type": "string"},
+                        "verdict": {
+                            "type": "string",
+                            "enum": ["pass", "fail", "warning"],
+                        },
+                        "reason": {"type": "string"},
+                    },
+                },
+            },
+        },
+    }
     messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -89,41 +119,14 @@ def _call_github_models(
         messages=messages,
         temperature=0.1,
         max_tokens=2048,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "test_verdict",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "required": ["verdict", "confidence", "files"],
-                    "additionalProperties": False,
-                    "properties": {
-                        "verdict": {
-                            "type": "string",
-                            "enum": ["pass", "fail", "warning"],
-                        },
-                        "confidence": {"type": "number"},
-                        "files": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "required": ["file", "verdict", "reason"],
-                                "additionalProperties": False,
-                                "properties": {
-                                    "file": {"type": "string"},
-                                    "verdict": {
-                                        "type": "string",
-                                        "enum": ["pass", "fail", "warning"],
-                                    },
-                                    "reason": {"type": "string"},
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        },
+        response_format=ResponseFormatJSONSchema(
+            type="json_schema",
+            json_schema=JSONSchema(
+                name="test_verdict",
+                strict=True,
+                schema=_VERDICT_SCHEMA,
+            ),
+        ),
     )
     return response.choices[0].message.content or ""
 
@@ -145,7 +148,7 @@ def _parse_ai_response(
     verdict = verdict_map.get(data["verdict"], Verdict.SKIP)
     confidence = float(data["confidence"])
 
-    file_verdicts = []
+    file_verdicts: list[FileVerdict] = []
     for f in data["files"]:
         fv_verdict = verdict_map.get(f["verdict"], Verdict.SKIP)
         file_verdicts.append(

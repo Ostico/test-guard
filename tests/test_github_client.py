@@ -1,3 +1,4 @@
+# pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 """Tests for GitHub client — PR comments and status checks."""
 
 from unittest.mock import MagicMock, patch

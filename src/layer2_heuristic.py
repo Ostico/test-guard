@@ -148,7 +148,7 @@ def run_layer2(
     else:
         overall = Verdict.PASS
 
-    details_parts = []
+    details_parts: list[str] = []
     for v in [Verdict.PASS, Verdict.WARNING, Verdict.FAIL]:
         count = verdicts.count(v)
         if count:

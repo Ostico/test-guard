@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 """Tests for Layer 2 — file-matching heuristic."""
 
 from src.layer2_heuristic import _is_excluded, _match_test_file, run_layer2

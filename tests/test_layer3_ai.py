@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 """Tests for Layer 3 — GPT-5-mini AI judgment."""
 
 import json

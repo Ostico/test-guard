@@ -37,6 +37,6 @@ ignore = [
 [tool.pyright]
 pythonVersion = "3.12"
 pythonPlatform = "Linux"
-typeCheckingMode = "standard"
+typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"

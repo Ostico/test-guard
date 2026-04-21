@@ -38,7 +38,7 @@ class LayerResult:
 class Report:
     """Final report aggregating all layers."""
 
-    layers: list[LayerResult] = field(default_factory=list)
+    layers: list[LayerResult] = field(default_factory=lambda: list[LayerResult]())
 
     @property
     def overall_verdict(self) -> Verdict:

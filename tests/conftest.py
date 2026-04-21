@@ -1,3 +1,4 @@
+# pyright: reportUnknownParameterType=false, reportMissingTypeArgument=false
 """Shared test fixtures."""
 
 import json
