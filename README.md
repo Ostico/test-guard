@@ -16,6 +16,33 @@ Three layers of defense — deterministic checks first, AI only when needed.
 
 Layer 1 and 2 handle ~80% of cases. Layer 3 only fires for ambiguous files.
 
+## Supported languages
+
+Layer 2 auto-detects test files for **15 languages** out of the box:
+
+| Language   | Test conventions                                           |
+|------------|------------------------------------------------------------|
+| Python     | `test_{name}.py`, `{name}_test.py`                         |
+| JavaScript | `{name}.test.js`, `{name}.spec.js`, `__tests__/{name}.js` |
+| JSX        | `{name}.test.jsx`, `{name}.spec.jsx`, `__tests__/{name}.jsx` |
+| TypeScript | `{name}.test.ts`, `{name}.spec.ts`, `__tests__/{name}.ts` |
+| TSX        | `{name}.test.tsx`, `{name}.spec.tsx`, `__tests__/{name}.tsx` |
+| PHP        | `{name}Test.php`                                           |
+| Go         | `{name}_test.go`                                           |
+| Java       | `{name}Test.java`                                          |
+| Kotlin     | `{name}Test.kt`                                            |
+| Ruby       | `{name}_spec.rb`, `test_{name}.rb`                         |
+| Rust       | `tests/{name}.rs`                                          |
+| C#         | `{name}Tests.cs`, `{name}Test.cs`                          |
+| Swift      | `{name}Tests.swift`, `{name}Test.swift`                    |
+| Scala      | `{name}Spec.scala`, `{name}Test.scala`                     |
+| C/C++      | `test_{name}.c`, `test_{name}.cpp`, `test_{name}.cc`       |
+| Elixir     | `{name}_test.exs`                                          |
+| Dart       | `{name}_test.dart`                                         |
+| Lua        | `test_{name}.lua`, `{name}_spec.lua`                       |
+
+Layer 1 accepts any coverage format (see below). Layer 3 is language-agnostic.
+
 ## Quick start
 
 ```yaml
@@ -54,7 +81,7 @@ No API keys needed. Uses `GITHUB_TOKEN` for everything.
 |---------------------------|---------------------|----------------------------------------------------------------------|
 | `coverage-file`           | _(none)_            | Path to coverage report (Cobertura XML, Clover XML, JaCoCo XML, or LCOV). Layer 1 skips if not provided. |
 | `coverage-threshold`      | `80`                | Min diff-coverage % to auto-pass.                                    |
-| `test-patterns`           | `auto`              | Source→test file mapping. Auto-detects Python, PHP, JS/TS, Go, Java. |
+| `test-patterns`           | `auto`              | Source→test file mapping. Auto-detects 15+ languages (see table above). |
 | `exclude-patterns`        | `*.md,docs/**,...`  | Files to skip.                                                       |
 | `ai-enabled`              | `true`              | Enable Layer 3 AI analysis.                                          |
 | `ai-model`                | `openai/gpt-5-mini` | GitHub Models model ID.                                              |
