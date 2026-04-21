@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 from openai import OpenAI
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import (
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+)
 from openai.types.shared_params import ResponseFormatJSONSchema
 from openai.types.shared_params.response_format_json_schema import JSONSchema
 
@@ -110,9 +113,9 @@ def _call_github_models(
             },
         },
     }
-    messages: list[ChatCompletionMessageParam] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
+    messages = [
+        ChatCompletionSystemMessageParam(role="system", content=system_prompt),
+        ChatCompletionUserMessageParam(role="user", content=user_prompt),
     ]
     response = client.chat.completions.create(
         model=model,
