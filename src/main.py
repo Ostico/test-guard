@@ -3,52 +3,44 @@
 from __future__ import annotations
 
 # pyright: reportUnknownMemberType=false
-import re
 import sys
 import traceback
 
-import requests as http_requests
+import requests
 
 from src.config import Config, parse_config
+from src.github_api import GITHUB_API_URL, create_session, get_json, get_paginated, get_text
 from src.github_client import format_report, report_to_github
 from src.layer1_coverage import run_layer1
 from src.layer2_heuristic import run_layer2
 from src.layer3_ai import run_layer3
 from src.models import Report, Verdict
 
-_GITHUB_API = "https://api.github.com"
-
 
 def _get_pr_context(
     config: Config,
+    session: requests.Session,
 ) -> tuple[list[str], list[str], str, dict[str, str]]:
     """Fetch PR context from GitHub API.
 
     Returns:
         (changed_files, all_repo_files, head_sha, file_diffs)
     """
-    headers = {
-        "Authorization": f"Bearer {config.github_token}",
-        "Accept": "application/vnd.github+json",
-    }
-
     # Get PR files
-    pr_url = f"{_GITHUB_API}/repos/{config.repo}/pulls/{config.pr_number}/files"
-    response = http_requests.get(pr_url, headers=headers, params={"per_page": 100}, timeout=30)
-    response.raise_for_status()
-    pr_files = response.json()
+    pr_url = f"{GITHUB_API_URL}/repos/{config.repo}/pulls/{config.pr_number}/files"
+    pr_files = get_paginated(session, pr_url)
 
     changed_files = [f["filename"] for f in pr_files]
     file_diffs = {f["filename"]: f.get("patch", "") for f in pr_files if f.get("patch")}
 
     # Get head SHA
-    pr_detail_url = f"{_GITHUB_API}/repos/{config.repo}/pulls/{config.pr_number}"
-    pr_detail = http_requests.get(pr_detail_url, headers=headers, timeout=30).json()
+    pr_detail_url = f"{GITHUB_API_URL}/repos/{config.repo}/pulls/{config.pr_number}"
+    pr_detail = get_json(session, pr_detail_url)
     head_sha = pr_detail["head"]["sha"]
 
     # Get repo file tree (for test-file lookup)
-    tree_url = f"{_GITHUB_API}/repos/{config.repo}/git/trees/{head_sha}?recursive=1"
-    tree_resp = http_requests.get(tree_url, headers=headers, timeout=30).json()
+    tree_url = f"{GITHUB_API_URL}/repos/{config.repo}/git/trees/{head_sha}?recursive=1"
+    tree_resp = get_json(session, tree_url)
     all_repo_files = [item["path"] for item in tree_resp.get("tree", []) if item["type"] == "blob"]
 
     return changed_files, all_repo_files, head_sha, file_diffs
@@ -60,9 +52,10 @@ def run_pipeline(config: Config) -> Report:
     Each layer can short-circuit the pipeline with a PASS verdict.
     """
     report = Report()
+    session = create_session(config.github_token)
 
     # Fetch PR context
-    changed_files, all_repo_files, head_sha, file_diffs = _get_pr_context(config)
+    changed_files, all_repo_files, head_sha, file_diffs = _get_pr_context(config, session)
 
     # === Layer 1: Coverage Gate ===
     l1 = run_layer1(config.coverage_file, config.coverage_threshold, changed_files)
@@ -92,28 +85,13 @@ def run_pipeline(config: Config) -> Report:
     # Fetch test file contents for AI context
     test_contents: dict[str, str] = {}
     for fv in l2.file_verdicts:
-        if fv.verdict == Verdict.WARNING and "exists" in fv.reason:
-            # Extract test file path from reason
-            # Reason format: "Test file exists (tests/test_foo.py) but was not modified"
-            match = re.search(r"\(([^)]+)\)", fv.reason)
-            if match:
-                test_path = match.group(1)
-                try:
-                    content_url = (
-                        f"{_GITHUB_API}/repos/{config.repo}/contents/{test_path}?ref={head_sha}"
-                    )
-                    resp = http_requests.get(
-                        content_url,
-                        headers={
-                            "Authorization": f"Bearer {config.github_token}",
-                            "Accept": "application/vnd.github.raw+json",
-                        },
-                        timeout=30,
-                    )
-                    if resp.ok:
-                        test_contents[test_path] = resp.text
-                except Exception:  # noqa: S110
-                    pass  # Best-effort fetch; failure is non-critical
+        if fv.matched_test is not None:
+            content_url = (
+                f"{GITHUB_API_URL}/repos/{config.repo}/contents/{fv.matched_test}?ref={head_sha}"
+            )
+            text = get_text(session, content_url)
+            if text is not None:
+                test_contents[fv.matched_test] = text
 
     l3 = run_layer3(
         ai_diffs,

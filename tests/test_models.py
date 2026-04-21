@@ -24,6 +24,15 @@ class TestFileVerdict:
         )
         assert fv.verdict == Verdict.FAIL
 
+    def test_matched_test_defaults_to_none(self):
+        fv = FileVerdict(
+            file="src/payments.py",
+            verdict=Verdict.PASS,
+            reason="Matched by convention",
+            layer="layer2",
+        )
+        assert fv.matched_test is None
+
 
 class TestLayerResult:
     def test_pass_result_short_circuits(self):
@@ -79,3 +88,11 @@ class TestReport:
         ]
         report = Report(layers=layers)
         assert report.overall_verdict == Verdict.WARNING
+
+    def test_overall_verdict_skip_when_all_layers_skip(self):
+        layers = [
+            LayerResult("layer1", Verdict.SKIP, "No coverage data", [], False),
+            LayerResult("layer2", Verdict.SKIP, "No relevant files", [], False),
+        ]
+        report = Report(layers=layers)
+        assert report.overall_verdict == Verdict.SKIP

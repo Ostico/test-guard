@@ -7,7 +7,8 @@ Sends focused diffs + test content and gets structured JSON verdict.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 from typing import TypedDict, cast
 
 from openai import OpenAI
@@ -35,6 +36,53 @@ class _AiResponse(TypedDict):
     files: list[_AiFileResponse]
 
 
+_VERDICT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "required": ["verdict", "confidence", "files"],
+    "additionalProperties": False,
+    "properties": {
+        "verdict": {
+            "type": "string",
+            "enum": ["pass", "fail", "warning"],
+        },
+        "confidence": {"type": "number"},
+        "files": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["file", "verdict", "reason"],
+                "additionalProperties": False,
+                "properties": {
+                    "file": {"type": "string"},
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["pass", "fail", "warning"],
+                    },
+                    "reason": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+
+_INJECTION_LINE_RE = re.compile(
+    r"^(?:[+\-\s]*)?(?:SYSTEM:|INSTRUCTION:|IGNORE PREVIOUS|You are\b)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_diff(diff: str, max_chars: int = 10_000) -> str:
+    sanitized_lines = [
+        "[REDACTED]" if _INJECTION_LINE_RE.match(line) else line
+        for line in diff.splitlines()
+    ]
+    sanitized = "\n".join(sanitized_lines)
+    if len(sanitized) > max_chars:
+        return sanitized[:max_chars] + "...[truncated]"
+    return sanitized
+
+
 def _load_system_prompt() -> str:
     return _PROMPT_PATH.read_text().strip()
 
@@ -48,18 +96,13 @@ def _build_prompt(
 
     for filepath, diff in file_diffs.items():
         parts.append(f"## Source file: {filepath}")
-        parts.append(f"```diff\n{diff}\n```")
+        parts.append(f"```diff\n{_sanitize_diff(diff)}\n```")
 
         # Find matching test content
         matching_tests = [
             (tf, tc)
             for tf, tc in test_contents.items()
-            if filepath.split("/")[-1].replace(".py", "") in tf
-            or filepath.split("/")[-1].replace(".php", "") in tf
-            or filepath.split("/")[-1].replace(".ts", "") in tf
-            or filepath.split("/")[-1].replace(".js", "") in tf
-            or filepath.split("/")[-1].replace(".go", "") in tf
-            or filepath.split("/")[-1].replace(".java", "") in tf
+            if PurePosixPath(filepath).stem in tf
         ]
 
         if matching_tests:
@@ -85,34 +128,6 @@ def _call_github_models(
         base_url="https://models.github.ai/inference",
         api_key=token,
     )
-    _VERDICT_SCHEMA: dict[str, object] = {
-        "type": "object",
-        "required": ["verdict", "confidence", "files"],
-        "additionalProperties": False,
-        "properties": {
-            "verdict": {
-                "type": "string",
-                "enum": ["pass", "fail", "warning"],
-            },
-            "confidence": {"type": "number"},
-            "files": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["file", "verdict", "reason"],
-                    "additionalProperties": False,
-                    "properties": {
-                        "file": {"type": "string"},
-                        "verdict": {
-                            "type": "string",
-                            "enum": ["pass", "fail", "warning"],
-                        },
-                        "reason": {"type": "string"},
-                    },
-                },
-            },
-        },
-    }
     messages = [
         ChatCompletionSystemMessageParam(role="system", content=system_prompt),
         ChatCompletionUserMessageParam(role="user", content=user_prompt),
@@ -131,6 +146,8 @@ def _call_github_models(
             ),
         ),
     )
+    if not response.choices:
+        return ""
     return response.choices[0].message.content or ""
 
 

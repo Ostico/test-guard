@@ -11,6 +11,10 @@ from typing import overload
 _DEFAULT_EXCLUDE = (
     "*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,migrations/**,docs/**,*.sql"
 )
+_DEFAULT_COVERAGE_THRESHOLD = 80
+_DEFAULT_AI_MODEL = "openai/gpt-5-mini"
+_DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.7
+_DEFAULT_AI_ENABLED_VALUES = ("true", "1", "yes")
 
 _DEFAULT_TEST_PATTERNS = {
     # source_glob -> test_template
@@ -147,11 +151,13 @@ def parse_config() -> Config:
 
     # Layer 1
     coverage_file = _env("COVERAGE-FILE")
-    threshold_raw = _env("COVERAGE-THRESHOLD", "80")
+    threshold_raw = _env("COVERAGE-THRESHOLD", str(_DEFAULT_COVERAGE_THRESHOLD))
     try:
         coverage_threshold = int(threshold_raw)
     except (ValueError, TypeError) as err:
         raise ValueError(f"coverage-threshold must be an integer, got: {threshold_raw!r}") from err
+    if not (0 <= coverage_threshold <= 100):
+        raise ValueError(f"coverage-threshold must be 0-100, got: {coverage_threshold}")
 
     # Layer 2
     exclude_raw = _env("EXCLUDE-PATTERNS", _DEFAULT_EXCLUDE)
@@ -161,19 +167,26 @@ def parse_config() -> Config:
     if test_patterns_raw == "auto":
         test_patterns = _DEFAULT_TEST_PATTERNS
     else:
-        # Future: parse custom JSON patterns
-        test_patterns = _DEFAULT_TEST_PATTERNS
+        raise ValueError(
+            "Custom test patterns not yet supported. Use 'auto' or omit the TEST-PATTERNS input."
+        )
 
     # Layer 3
-    ai_enabled = _env("AI-ENABLED", "true").lower() in ("true", "1", "yes")
-    ai_model = _env("AI-MODEL", "openai/gpt-5-mini")
-    confidence_raw = _env("AI-CONFIDENCE-THRESHOLD", "0.7")
+    ai_enabled = _env("AI-ENABLED", "true").lower() in _DEFAULT_AI_ENABLED_VALUES
+    ai_model = _env("AI-MODEL", _DEFAULT_AI_MODEL)
+    confidence_raw = _env(
+        "AI-CONFIDENCE-THRESHOLD", str(_DEFAULT_AI_CONFIDENCE_THRESHOLD)
+    )
     try:
         ai_confidence_threshold = float(confidence_raw)
     except (ValueError, TypeError) as err:
         raise ValueError(
             f"ai-confidence-threshold must be a float, got: {confidence_raw!r}"
         ) from err
+    if not (0.0 <= ai_confidence_threshold <= 1.0):
+        raise ValueError(
+            f"ai-confidence-threshold must be 0.0-1.0, got: {ai_confidence_threshold}"
+        )
 
     return Config(
         github_token=github_token,

@@ -21,6 +21,7 @@ class FileVerdict:
     verdict: Verdict
     reason: str
     layer: str
+    matched_test: str | None = None
 
 
 @dataclass
@@ -49,6 +50,8 @@ class Report:
         layer produced FAIL/WARNING, overall is PASS.
         """
         verdicts = [lr.verdict for lr in self.layers]
+        if verdicts and all(verdict == Verdict.SKIP for verdict in verdicts):
+            return Verdict.SKIP
         if Verdict.FAIL in verdicts:
             return Verdict.FAIL
         if Verdict.WARNING in verdicts:

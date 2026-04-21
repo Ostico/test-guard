@@ -131,6 +131,7 @@ def run_layer2(
                     verdict=Verdict.PASS,
                     reason=f"Test file modified in PR: {test_file}",
                     layer="layer2",
+                    matched_test=test_file,
                 )
             )
         else:
@@ -141,6 +142,7 @@ def run_layer2(
                     verdict=Verdict.WARNING,
                     reason=f"Test file exists ({test_file}) but was not modified in this PR",
                     layer="layer2",
+                    matched_test=test_file,
                 )
             )
 

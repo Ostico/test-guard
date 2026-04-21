@@ -1,7 +1,7 @@
 # pyright: reportPrivateUsage=false
 """Tests for Layer 2 — file-matching heuristic."""
 
-from src.layer2_heuristic import _is_excluded, _match_test_file, run_layer2
+from src.layer2_heuristic import _is_excluded, _is_test_file, _match_test_file, run_layer2
 from src.models import Verdict
 
 _PY_PATTERNS = {
@@ -56,6 +56,58 @@ class TestMatchTestFile:
         )
         assert result is None
 
+    def test_returns_none_when_source_matches_no_language_pattern(self):
+        result = _match_test_file(
+            "src/custom.xyz",
+            all_repo_files=["src/custom.xyz", "tests/test_custom.xyz"],
+            patterns=_PY_PATTERNS,
+        )
+        assert result is None
+
+
+class TestIsTestFile:
+    def test_detects_tests_suffix_for_dotnet(self):
+        patterns = {
+            "csharp": {"src_pattern": "**/*.cs", "test_template": "tests/{name}Tests.cs"},
+        }
+        assert _is_test_file("src/AuthTests.cs", patterns) is True
+
+    def test_detects_dot_test_pattern(self):
+        patterns = {
+            "typescript": {"src_pattern": "**/*.ts", "test_template": "**/{name}.test.tsx"},
+        }
+        assert _is_test_file("src/Auth.test.tsx", patterns) is True
+
+    def test_detects_dot_spec_pattern(self):
+        patterns = {
+            "typescript": {"src_pattern": "**/*.ts", "test_template": "**/{name}.spec.ts"},
+        }
+        assert _is_test_file("src/Auth.spec.ts", patterns) is True
+
+    def test_detects_underscore_test_suffix(self):
+        patterns = {
+            "go": {"src_pattern": "**/*.go", "test_template": "**/{name}_test.go"},
+        }
+        assert _is_test_file("src/auth_test.go", patterns) is True
+
+    def test_detects_underscore_spec_suffix(self):
+        patterns = {
+            "ruby": {"src_pattern": "**/*.rb", "test_template": "spec/{name}_spec.rb"},
+        }
+        assert _is_test_file("lib/auth_spec.rb", patterns) is True
+
+    def test_detects_spec_suffix_for_scala(self):
+        patterns = {
+            "scala": {"src_pattern": "**/*.scala", "test_template": "**/{name}Spec.scala"},
+        }
+        assert _is_test_file("src/AuthSpec.scala", patterns) is True
+
+    def test_detects_dunder_tests_directory(self):
+        patterns = {
+            "javascript": {"src_pattern": "**/*.js", "test_template": "__tests__/{name}.js"},
+        }
+        assert _is_test_file("__tests__/Auth.js", patterns) is True
+
 
 class TestRunLayer2:
     def test_all_files_covered(self):
@@ -66,6 +118,8 @@ class TestRunLayer2:
             exclude_patterns=["*.md"],
         )
         assert result.verdict == Verdict.PASS
+        assert len(result.file_verdicts) == 1
+        assert result.file_verdicts[0].matched_test == "tests/test_auth.py"
 
     def test_missing_test_file(self):
         result = run_layer2(
@@ -77,6 +131,7 @@ class TestRunLayer2:
         assert result.verdict == Verdict.FAIL
         assert len(result.file_verdicts) == 1
         assert result.file_verdicts[0].file == "src/billing.py"
+        assert result.file_verdicts[0].matched_test is None
 
     def test_excluded_files_skip(self):
         result = run_layer2(
@@ -107,3 +162,4 @@ class TestRunLayer2:
             exclude_patterns=[],
         )
         assert result.file_verdicts[0].verdict == Verdict.WARNING
+        assert result.file_verdicts[0].matched_test == "tests/test_auth.py"

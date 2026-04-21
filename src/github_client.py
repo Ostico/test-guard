@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 import requests
 
+from src.github_api import GITHUB_API_URL, create_session, post_json
 from src.models import Report, Verdict
-
-_GITHUB_API = "https://api.github.com"
 
 _VERDICT_EMOJI = {
     Verdict.PASS: "✅",
@@ -21,6 +22,13 @@ _VERDICT_STATE = {
     Verdict.WARNING: "success",  # Warnings don't block
     Verdict.SKIP: "success",
 }
+
+_TOKEN_PATTERNS = (
+    r"ghp_\w+",
+    r"gho_\w+",
+    r"github_pat_\w+",
+    r"Bearer\s+\S+",
+)
 
 
 def format_report(report: Report) -> str:
@@ -50,53 +58,53 @@ def format_report(report: Report) -> str:
     return "\n".join(lines)
 
 
+def _redact_response_text(text: str, max_len: int = 200) -> str:
+    """Redact sensitive tokens and truncate response text for logging."""
+    redacted = text[:max_len]
+    for pattern in _TOKEN_PATTERNS:
+        redacted = re.sub(pattern, "[REDACTED]", redacted)
+    return redacted
+
+
 def post_comment(
-    token: str,
+    session: requests.Session,
     repo: str,
     pr_number: int,
     body: str,
 ) -> None:
     """Post or update a comment on a PR."""
-    url = f"{_GITHUB_API}/repos/{repo}/issues/{pr_number}/comments"
-    resp = requests.post(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-        json={"body": body},
-        timeout=30,
-    )
+    url = f"{GITHUB_API_URL}/repos/{repo}/issues/{pr_number}/comments"
+    resp = post_json(session, url, {"body": body})
     if not resp.ok:
-        print(f"::warning::Failed to post PR comment ({resp.status_code}): {resp.text[:200]}")
+        print(
+            "::warning::Failed to post PR comment "
+            f"({resp.status_code}): {_redact_response_text(resp.text)}"
+        )
 
 
 def post_status(
-    token: str,
+    session: requests.Session,
     repo: str,
     sha: str,
     state: str,
     description: str,
 ) -> None:
     """Post a commit status check."""
-    url = f"{_GITHUB_API}/repos/{repo}/statuses/{sha}"
-    resp = requests.post(
+    url = f"{GITHUB_API_URL}/repos/{repo}/statuses/{sha}"
+    resp = post_json(
+        session,
         url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-        json={
+        {
             "state": state,
             "description": description[:140],
             "context": "test-guard",
         },
-        timeout=30,
     )
     if not resp.ok:
-        print(f"::warning::Failed to post commit status ({resp.status_code}): {resp.text[:200]}")
+        print(
+            "::warning::Failed to post commit status "
+            f"({resp.status_code}): {_redact_response_text(resp.text)}"
+        )
 
 
 def report_to_github(
@@ -107,17 +115,22 @@ def report_to_github(
     sha: str,
 ) -> None:
     """Post both the PR comment and commit status."""
-    # Always post status
-    state = _VERDICT_STATE[report.overall_verdict]
-    desc_map = {
-        Verdict.PASS: "All test adequacy checks passed",
-        Verdict.FAIL: "Test adequacy issues found",
-        Verdict.WARNING: "Test adequacy warnings (non-blocking)",
-        Verdict.SKIP: "Analysis skipped",
-    }
-    post_status(token, repo, sha, state, desc_map[report.overall_verdict])
+    try:
+        session = create_session(token)
 
-    # Post comment only on PRs
-    if pr_number:
-        body = format_report(report)
-        post_comment(token, repo, pr_number, body)
+        # Always post status
+        state = _VERDICT_STATE[report.overall_verdict]
+        desc_map = {
+            Verdict.PASS: "All test adequacy checks passed",
+            Verdict.FAIL: "Test adequacy issues found",
+            Verdict.WARNING: "Test adequacy warnings (non-blocking)",
+            Verdict.SKIP: "Analysis skipped",
+        }
+        post_status(session, repo, sha, state, desc_map[report.overall_verdict])
+
+        # Post comment only on PRs
+        if pr_number is not None:
+            body = format_report(report)
+            post_comment(session, repo, pr_number, body)
+    except Exception as exc:
+        print(f"::warning::GitHub reporting failed: {_redact_response_text(str(exc), max_len=500)}")

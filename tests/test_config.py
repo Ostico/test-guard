@@ -70,3 +70,50 @@ class TestParseConfig:
         monkeypatch.setenv("GITHUB_REF", "refs/pull/42/merge")
         cfg = parse_config()
         assert cfg.pr_number == 42
+
+    def test_coverage_threshold_range_validation(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        monkeypatch.setenv("INPUT_COVERAGE-THRESHOLD", "-1")
+        with pytest.raises(ValueError, match="coverage-threshold must be 0-100"):
+            parse_config()
+
+        monkeypatch.setenv("INPUT_COVERAGE-THRESHOLD", "101")
+        with pytest.raises(ValueError, match="coverage-threshold must be 0-100"):
+            parse_config()
+
+        monkeypatch.setenv("INPUT_COVERAGE-THRESHOLD", "0")
+        assert parse_config().coverage_threshold == 0
+
+        monkeypatch.setenv("INPUT_COVERAGE-THRESHOLD", "100")
+        assert parse_config().coverage_threshold == 100
+
+    def test_ai_confidence_threshold_range_validation(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        monkeypatch.setenv("INPUT_AI-CONFIDENCE-THRESHOLD", "-0.1")
+        with pytest.raises(ValueError, match=r"ai-confidence-threshold must be 0\.0-1\.0"):
+            parse_config()
+
+        monkeypatch.setenv("INPUT_AI-CONFIDENCE-THRESHOLD", "1.1")
+        with pytest.raises(ValueError, match=r"ai-confidence-threshold must be 0\.0-1\.0"):
+            parse_config()
+
+        monkeypatch.setenv("INPUT_AI-CONFIDENCE-THRESHOLD", "0.0")
+        assert parse_config().ai_confidence_threshold == 0.0
+
+        monkeypatch.setenv("INPUT_AI-CONFIDENCE-THRESHOLD", "1.0")
+        assert parse_config().ai_confidence_threshold == 1.0
+
+    def test_custom_test_patterns_not_supported_raises(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.setenv("INPUT_TEST-PATTERNS", "custom_value")
+
+        with pytest.raises(ValueError, match="Custom test patterns not yet supported"):
+            parse_config()

@@ -12,6 +12,8 @@ from pathlib import Path
 
 from src.models import LayerResult, Verdict
 
+_DIFF_COVER_TIMEOUT = 60
+
 
 def _compute_diff_coverage(coverage_file: str) -> float:
     """Run diff-cover and return the total diff coverage percentage.
@@ -30,7 +32,7 @@ def _compute_diff_coverage(coverage_file: str) -> float:
             ],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=_DIFF_COVER_TIMEOUT,
         )
         if result.returncode != 0:
             return -1.0
