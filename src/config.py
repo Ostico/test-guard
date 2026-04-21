@@ -9,7 +9,17 @@ from typing import overload
 
 # GitHub Actions passes inputs as INPUT_<NAME> env vars (uppercased, hyphens kept).
 _DEFAULT_EXCLUDE = (
-    "*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,migrations/**,docs/**,*.sql"
+    # Data / markup / generic config (no source language match)
+    "*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,*.sql,"
+    # Directories
+    "migrations/**,docs/**,"
+    # JS/TS config conventions (match **/*.js / **/*.ts but are not source)
+    "*.config.js,*.config.ts,*.config.mjs,*.config.cjs,"
+    "Gruntfile.js,Gulpfile.js,"
+    # Python config conventions (match **/*.py but are not source)
+    "conftest.py,setup.py,manage.py,noxfile.py,fabfile.py,"
+    # Rust build script (matches **/*.rs but is not source)
+    "build.rs"
 )
 _DEFAULT_COVERAGE_THRESHOLD = 80
 _DEFAULT_AI_MODEL = "openai/gpt-5-mini"

@@ -24,6 +24,14 @@ def _is_excluded(filepath: str, exclude_patterns: list[str]) -> bool:
     return False
 
 
+def _matches_source_pattern(filepath: str, patterns: dict[str, dict[str, str]]) -> bool:
+    """Check if a file matches any known source language glob."""
+    for _lang, mapping in patterns.items():
+        if fnmatch.fnmatch(filepath, mapping["src_pattern"]):
+            return True
+    return False
+
+
 def _is_test_file(filepath: str, patterns: dict[str, dict[str, str]]) -> bool:
     """Check if a file is itself a test file."""
     name = PurePosixPath(filepath).stem
@@ -111,6 +119,10 @@ def run_layer2(
 
         # Skip test files themselves
         if _is_test_file(filepath, patterns):
+            continue
+
+        # Skip files that don't match any known source language
+        if not _matches_source_pattern(filepath, patterns):
             continue
 
         test_file = _match_test_file(filepath, all_repo_files, patterns)

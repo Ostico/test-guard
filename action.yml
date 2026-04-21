@@ -19,7 +19,7 @@ inputs:
     default: 'auto'
   exclude-patterns:
     description: 'Comma-separated glob patterns to exclude from analysis.'
-    default: '*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,migrations/**,docs/**,*.sql'
+    default: '*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,*.sql,migrations/**,docs/**,*.config.js,*.config.ts,*.config.mjs,*.config.cjs,Gruntfile.js,Gulpfile.js,conftest.py,setup.py,manage.py,noxfile.py,fabfile.py,build.rs'
   ai-enabled:
     description: 'Enable AI Layer 3 analysis (true/false).'
     default: 'true'

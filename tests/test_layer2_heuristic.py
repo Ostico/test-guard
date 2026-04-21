@@ -1,7 +1,13 @@
 # pyright: reportPrivateUsage=false
 """Tests for Layer 2 — file-matching heuristic."""
 
-from src.layer2_heuristic import _is_excluded, _is_test_file, _match_test_file, run_layer2
+from src.layer2_heuristic import (
+    _is_excluded,
+    _is_test_file,
+    _match_test_file,
+    _matches_source_pattern,
+    run_layer2,
+)
 from src.models import Verdict
 
 _PY_PATTERNS = {
@@ -109,6 +115,29 @@ class TestIsTestFile:
         assert _is_test_file("__tests__/Auth.js", patterns) is True
 
 
+class TestMatchesSourcePattern:
+    """Files whose extension is not in any supported language should not be analyzed."""
+
+    def test_python_file_matches(self):
+        assert _matches_source_pattern("src/auth.py", _PY_PATTERNS) is True
+
+    def test_php_file_matches(self):
+        php = {"php": {"src_pattern": "**/*.php", "test_template": "**/{name}Test.php"}}
+        assert _matches_source_pattern("lib/Model/User.php", php) is True
+
+    def test_neon_file_does_not_match(self):
+        assert _matches_source_pattern("phpstan.neon", _PY_PATTERNS) is False
+
+    def test_file_without_extension_does_not_match(self):
+        assert _matches_source_pattern("docker", _PY_PATTERNS) is False
+
+    def test_dockerfile_does_not_match(self):
+        assert _matches_source_pattern("docker/Dockerfile", _PY_PATTERNS) is False
+
+    def test_neon_baseline_does_not_match(self):
+        assert _matches_source_pattern("phpstan-baseline.neon", _PY_PATTERNS) is False
+
+
 class TestRunLayer2:
     def test_all_files_covered(self):
         result = run_layer2(
@@ -153,6 +182,64 @@ class TestRunLayer2:
         verdicts_by_file = {fv.file: fv.verdict for fv in result.file_verdicts}
         assert verdicts_by_file["src/auth.py"] == Verdict.PASS
         assert verdicts_by_file["src/billing.py"] == Verdict.FAIL
+
+    def test_unrecognized_extensions_are_silently_skipped(self):
+        result = run_layer2(
+            changed_files=["phpstan.neon", "docker", "src/auth.py"],
+            all_repo_files=["phpstan.neon", "docker", "src/auth.py"],
+            patterns=_PY_PATTERNS,
+            exclude_patterns=[],
+        )
+        # Only auth.py (recognized .py source) should appear in verdicts
+        assert len(result.file_verdicts) == 1
+        assert result.file_verdicts[0].file == "src/auth.py"
+
+    def test_config_js_excluded_by_default_patterns(self):
+        from src.config import _DEFAULT_EXCLUDE
+
+        default_patterns = [p.strip() for p in _DEFAULT_EXCLUDE.split(",") if p.strip()]
+        js_patterns = {
+            "js": {"src_pattern": "**/*.js", "test_template": "**/{name}.test.js"},
+        }
+        result = run_layer2(
+            changed_files=["jest.config.js", "src/app.js"],
+            all_repo_files=["jest.config.js", "src/app.js"],
+            patterns=js_patterns,
+            exclude_patterns=default_patterns,
+        )
+        # jest.config.js should be excluded, only app.js in verdicts
+        assert len(result.file_verdicts) == 1
+        assert result.file_verdicts[0].file == "src/app.js"
+
+    def test_python_config_files_excluded_by_default_patterns(self):
+        from src.config import _DEFAULT_EXCLUDE
+
+        default_patterns = [p.strip() for p in _DEFAULT_EXCLUDE.split(",") if p.strip()]
+        result = run_layer2(
+            changed_files=["conftest.py", "setup.py", "src/auth.py"],
+            all_repo_files=["conftest.py", "setup.py", "src/auth.py"],
+            patterns=_PY_PATTERNS,
+            exclude_patterns=default_patterns,
+        )
+        # conftest.py and setup.py should be excluded
+        assert len(result.file_verdicts) == 1
+        assert result.file_verdicts[0].file == "src/auth.py"
+
+    def test_rust_build_script_excluded_by_default_patterns(self):
+        from src.config import _DEFAULT_EXCLUDE
+
+        default_patterns = [p.strip() for p in _DEFAULT_EXCLUDE.split(",") if p.strip()]
+        rs_patterns = {
+            "rust": {"src_pattern": "**/*.rs", "test_template": "tests/{name}.rs"},
+        }
+        result = run_layer2(
+            changed_files=["build.rs", "src/lib.rs"],
+            all_repo_files=["build.rs", "src/lib.rs"],
+            patterns=rs_patterns,
+            exclude_patterns=default_patterns,
+        )
+        assert len(result.file_verdicts) == 1
+        assert result.file_verdicts[0].file == "src/lib.rs"
 
     def test_ambiguous_files_collected(self):
         result = run_layer2(
