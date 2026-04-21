@@ -62,7 +62,7 @@ No API keys needed. Uses `GITHUB_TOKEN` for everything.
 
 ## Output example
 
-```
+```markdown
 ## 🧪 Test Guard Report
 
 ### Layer 1: ❌ FAIL
