@@ -14,13 +14,81 @@ _DEFAULT_EXCLUDE = (
 
 _DEFAULT_TEST_PATTERNS = {
     # source_glob -> test_template
-    # {dir} = parent dir, {name} = filename without ext, {ext} = extension
+    # {name} = filename without extension
+    # Multiple entries per language to cover all common naming conventions.
+    #
+    # --- Python ---
     "python": {"src_pattern": "**/*.py", "test_template": "tests/test_{name}.py"},
+    "python-suffix": {"src_pattern": "**/*.py", "test_template": "**/{name}_test.py"},
+    #
+    # --- JavaScript ---
+    "js-test": {"src_pattern": "**/*.js", "test_template": "**/{name}.test.js"},
+    "js-spec": {"src_pattern": "**/*.js", "test_template": "**/{name}.spec.js"},
+    "js-dir": {"src_pattern": "**/*.js", "test_template": "**/__tests__/{name}.js"},
+    #
+    # --- JSX ---
+    "jsx-test": {"src_pattern": "**/*.jsx", "test_template": "**/{name}.test.jsx"},
+    "jsx-spec": {"src_pattern": "**/*.jsx", "test_template": "**/{name}.spec.jsx"},
+    "jsx-dir": {"src_pattern": "**/*.jsx", "test_template": "**/__tests__/{name}.jsx"},
+    #
+    # --- TypeScript ---
+    "ts-test": {"src_pattern": "**/*.ts", "test_template": "**/{name}.test.ts"},
+    "ts-spec": {"src_pattern": "**/*.ts", "test_template": "**/{name}.spec.ts"},
+    "ts-dir": {"src_pattern": "**/*.ts", "test_template": "**/__tests__/{name}.ts"},
+    #
+    # --- TSX ---
+    "tsx-test": {"src_pattern": "**/*.tsx", "test_template": "**/{name}.test.tsx"},
+    "tsx-spec": {"src_pattern": "**/*.tsx", "test_template": "**/{name}.spec.tsx"},
+    "tsx-dir": {"src_pattern": "**/*.tsx", "test_template": "**/__tests__/{name}.tsx"},
+    #
+    # --- PHP ---
     "php": {"src_pattern": "**/*.php", "test_template": "tests/{name}Test.php"},
-    "js": {"src_pattern": "**/*.js", "test_template": "**/{name}.test.js"},
-    "ts": {"src_pattern": "**/*.ts", "test_template": "**/{name}.test.ts"},
+    #
+    # --- Go ---
     "go": {"src_pattern": "**/*.go", "test_template": "**/{name}_test.go"},
+    #
+    # --- Java ---
     "java": {"src_pattern": "**/*.java", "test_template": "**/{name}Test.java"},
+    #
+    # --- Kotlin ---
+    "kotlin": {"src_pattern": "**/*.kt", "test_template": "**/{name}Test.kt"},
+    #
+    # --- Ruby ---
+    "ruby-spec": {"src_pattern": "**/*.rb", "test_template": "**/{name}_spec.rb"},
+    "ruby-test": {"src_pattern": "**/*.rb", "test_template": "**/test_{name}.rb"},
+    #
+    # --- Rust (integration tests; inline #[cfg(test)] detected by Layer 3 AI) ---
+    "rust": {"src_pattern": "**/*.rs", "test_template": "tests/{name}.rs"},
+    #
+    # --- C# ---
+    "csharp": {"src_pattern": "**/*.cs", "test_template": "**/{name}Tests.cs"},
+    "csharp-single": {"src_pattern": "**/*.cs", "test_template": "**/{name}Test.cs"},
+    #
+    # --- Swift ---
+    "swift": {"src_pattern": "**/*.swift", "test_template": "**/{name}Tests.swift"},
+    "swift-single": {"src_pattern": "**/*.swift", "test_template": "**/{name}Test.swift"},
+    #
+    # --- Scala ---
+    "scala-spec": {"src_pattern": "**/*.scala", "test_template": "**/{name}Spec.scala"},
+    "scala-test": {"src_pattern": "**/*.scala", "test_template": "**/{name}Test.scala"},
+    #
+    # --- C ---
+    "c": {"src_pattern": "**/*.c", "test_template": "**/test_{name}.c"},
+    #
+    # --- C++ ---
+    "cpp": {"src_pattern": "**/*.cpp", "test_template": "**/test_{name}.cpp"},
+    "cpp-cc": {"src_pattern": "**/*.cc", "test_template": "**/test_{name}.cc"},
+    "cpp-cxx": {"src_pattern": "**/*.cxx", "test_template": "**/test_{name}.cxx"},
+    #
+    # --- Elixir ---
+    "elixir": {"src_pattern": "**/*.ex", "test_template": "test/**/{name}_test.exs"},
+    #
+    # --- Dart ---
+    "dart": {"src_pattern": "**/*.dart", "test_template": "test/**/{name}_test.dart"},
+    #
+    # --- Lua ---
+    "lua": {"src_pattern": "**/*.lua", "test_template": "**/test_{name}.lua"},
+    "lua-spec": {"src_pattern": "**/*.lua", "test_template": "**/{name}_spec.lua"},
 }
 
 

@@ -29,16 +29,23 @@ def _is_test_file(filepath: str, patterns: dict[str, dict[str, str]]) -> bool:
     name = PurePosixPath(filepath).stem
     for _lang, mapping in patterns.items():
         template = mapping["test_template"]
-        # Extract the test naming convention from template
-        # e.g., "tests/test_{name}.py" -> file starts with "test_"
-        # e.g., "**/{name}Test.php" -> file ends with "Test"
         if "test_{name}" in template and name.startswith("test_"):
             return True
         if "{name}Test" in template and name.endswith("Test"):
             return True
+        if "{name}Tests" in template and name.endswith("Tests"):
+            return True
         if "{name}.test" in template and ".test." in filepath:
             return True
+        if "{name}.spec" in template and ".spec." in filepath:
+            return True
         if "{name}_test" in template and name.endswith("_test"):
+            return True
+        if "{name}_spec" in template and name.endswith("_spec"):
+            return True
+        if "{name}Spec" in template and name.endswith("Spec"):
+            return True
+        if "__tests__/" in template and "__tests__/" in filepath:
             return True
     return False
 
