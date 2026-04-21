@@ -13,20 +13,6 @@ DO NOT penalize for:
 - Missing tests on configuration or documentation files
 - Test style preferences (unit vs integration)
 
-You MUST respond with valid JSON matching this exact schema:
-
-{
-  "verdict": "pass" | "fail" | "warning",
-  "confidence": <float 0.0 to 1.0>,
-  "files": [
-    {
-      "file": "<filepath>",
-      "verdict": "pass" | "fail" | "warning",
-      "reason": "<one sentence explaining the verdict>"
-    }
-  ]
-}
-
 Rules:
 - "pass": Tests adequately cover the changes.
 - "fail": Significant behavioral changes have NO corresponding tests.

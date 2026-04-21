@@ -1,10 +1,9 @@
 """Tests for Layer 3 — GPT-5-mini AI judgment."""
 import json
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.layer3_ai import run_layer3, _build_prompt, _parse_ai_response
-from src.models import FileVerdict, Verdict
+from src.models import Verdict
 
 
 class TestBuildPrompt:
@@ -43,19 +42,25 @@ class TestParseAiResponse:
         assert file_verdicts[0].verdict == Verdict.FAIL
 
     def test_invalid_json_returns_skip(self):
-        verdict, confidence, file_verdicts = _parse_ai_response("not json at all")
+        verdict, confidence, _ = _parse_ai_response("not json at all")
         assert verdict == Verdict.SKIP
         assert confidence == 0.0
 
-    def test_missing_fields_returns_skip(self):
-        raw = json.dumps({"verdict": "pass"})  # missing confidence, files
+    def test_unexpected_verdict_maps_to_skip(self):
+        raw = json.dumps({
+            "verdict": "maybe",
+            "confidence": 0.9,
+            "files": [],
+        })
         verdict, confidence, file_verdicts = _parse_ai_response(raw)
         assert verdict == Verdict.SKIP
+        assert confidence == 0.9
+        assert file_verdicts == []
 
 
 class TestRunLayer3:
     @patch("src.layer3_ai._call_github_models")
-    def test_pass_with_high_confidence(self, mock_call):
+    def test_pass_with_high_confidence(self, mock_call: MagicMock):
         mock_call.return_value = json.dumps({
             "verdict": "pass",
             "confidence": 0.95,
@@ -73,7 +78,7 @@ class TestRunLayer3:
         assert result.verdict == Verdict.PASS
 
     @patch("src.layer3_ai._call_github_models")
-    def test_low_confidence_becomes_warning(self, mock_call):
+    def test_low_confidence_becomes_warning(self, mock_call: MagicMock):
         mock_call.return_value = json.dumps({
             "verdict": "fail",
             "confidence": 0.4,
@@ -92,7 +97,7 @@ class TestRunLayer3:
         assert result.verdict == Verdict.WARNING
 
     @patch("src.layer3_ai._call_github_models")
-    def test_api_failure_returns_skip(self, mock_call):
+    def test_api_failure_returns_skip(self, mock_call: MagicMock):
         mock_call.side_effect = Exception("API down")
         result = run_layer3(
             file_diffs={"src/auth.py": "+ code"},

@@ -7,13 +7,25 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TypedDict, cast
 
-import requests
+from openai import OpenAI
 
 from src.models import FileVerdict, LayerResult, Verdict
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "test_adequacy.txt"
-_GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
+
+
+class _AiFileResponse(TypedDict):
+    file: str
+    verdict: str
+    reason: str
+
+
+class _AiResponse(TypedDict):
+    verdict: str
+    confidence: float
+    files: list[_AiFileResponse]
 
 
 def _load_system_prompt() -> str:
@@ -61,27 +73,55 @@ def _call_github_models(
     token: str,
 ) -> str:
     """Call GitHub Models API and return the raw response text."""
-    response = requests.post(
-        _GITHUB_MODELS_URL,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.1,
-            "max_tokens": 2048,
-        },
-        timeout=60,
+    client = OpenAI(
+        base_url="https://models.github.ai/inference",
+        api_key=token,
     )
-    response.raise_for_status()
-    data = response.json()
-    return data["choices"][0]["message"]["content"]
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.1,
+        max_tokens=2048,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "test_verdict",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "required": ["verdict", "confidence", "files"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "verdict": {
+                            "type": "string",
+                            "enum": ["pass", "fail", "warning"],
+                        },
+                        "confidence": {"type": "number"},
+                        "files": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["file", "verdict", "reason"],
+                                "additionalProperties": False,
+                                "properties": {
+                                    "file": {"type": "string"},
+                                    "verdict": {
+                                        "type": "string",
+                                        "enum": ["pass", "fail", "warning"],
+                                    },
+                                    "reason": {"type": "string"},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    )
+    return response.choices[0].message.content or ""
 
 
 def _parse_ai_response(
@@ -93,24 +133,21 @@ def _parse_ai_response(
     On parse failure, returns (SKIP, 0.0, []).
     """
     try:
-        data = json.loads(raw)
+        data = cast(_AiResponse, json.loads(raw))
     except json.JSONDecodeError:
-        return Verdict.SKIP, 0.0, []
-
-    if not all(k in data for k in ("verdict", "confidence", "files")):
         return Verdict.SKIP, 0.0, []
 
     verdict_map = {"pass": Verdict.PASS, "fail": Verdict.FAIL, "warning": Verdict.WARNING}
     verdict = verdict_map.get(data["verdict"], Verdict.SKIP)
-    confidence = float(data.get("confidence", 0.0))
+    confidence = float(data["confidence"])
 
     file_verdicts = []
-    for f in data.get("files", []):
-        fv_verdict = verdict_map.get(f.get("verdict", ""), Verdict.SKIP)
+    for f in data["files"]:
+        fv_verdict = verdict_map.get(f["verdict"], Verdict.SKIP)
         file_verdicts.append(FileVerdict(
-            file=f.get("file", "unknown"),
+            file=f["file"],
             verdict=fv_verdict,
-            reason=f.get("reason", "No reason provided"),
+            reason=f["reason"],
             layer="layer3",
         ))
 
