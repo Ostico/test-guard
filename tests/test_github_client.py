@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src import github_client
-from src.github_client import format_report, post_comment, post_status, report_to_github
+from src.github_client import format_report, post_check_run, post_comment, report_to_github
 from src.models import FileVerdict, LayerResult, Report, Verdict
 
 
@@ -63,7 +63,7 @@ def full_report() -> Report:
 class TestFormatReport:
     def test_short_circuit_report(self, sample_report):
         md = format_report(sample_report)
-        assert "## 🧪 Test Guard Report" in md
+        assert "## 🧪 Test-Guard Report" in md
         assert "Layer 1" in md
         assert "92%" in md
         assert "✅" in md
@@ -108,36 +108,64 @@ class TestPostComment:
         assert "[REDACTED]" in out
 
 
-class TestPostStatus:
+class TestPostCheckRun:
     @patch("src.github_client.post_json")
-    def test_posts_success_status(self, mock_post_json):
+    def test_creates_completed_check_run(self, mock_post_json):
         mock_post_json.return_value = MagicMock(ok=True, status_code=201, text="")
         session = MagicMock()
-        post_status(
+        post_check_run(
             session=session,
             repo="owner/repo",
             sha="abc123",
-            state="success",
-            description="All checks passed",
+            conclusion="success",
+            title="All test adequacy checks passed",
+            summary="## Report\nAll good.",
         )
         mock_post_json.assert_called_once()
         url = mock_post_json.call_args[0][1]
-        assert "statuses/abc123" in url
-        assert mock_post_json.call_args[0][0] is session
+        assert url == "https://api.github.com/repos/owner/repo/check-runs"
+        body = mock_post_json.call_args[0][2]
+        assert body["name"] == "Test-Guard"
+        assert body["head_sha"] == "abc123"
+        assert body["status"] == "completed"
+        assert body["conclusion"] == "success"
+        assert body["output"]["title"] == "All test adequacy checks passed"
+        assert body["output"]["summary"] == "## Report\nAll good."
 
     @patch("src.github_client.post_json")
-    def test_posts_failure_status(self, mock_post_json):
+    def test_creates_failure_check_run(self, mock_post_json):
         mock_post_json.return_value = MagicMock(ok=True, status_code=201, text="")
-        post_status(
+        post_check_run(
             session=MagicMock(),
             repo="owner/repo",
             sha="abc123",
-            state="failure",
-            description="Missing tests for 2 files",
+            conclusion="failure",
+            title="Test adequacy issues found",
+            summary="Missing tests.",
         )
         body = mock_post_json.call_args[0][2]
-        assert body["state"] == "failure"
-        assert body["context"] == "test-guard"
+        assert body["conclusion"] == "failure"
+        assert body["name"] == "Test-Guard"
+
+    @patch("src.github_client.post_json")
+    def test_check_run_failure_prints_warning(self, mock_post_json, capsys):
+        mock_post_json.return_value = MagicMock(
+            ok=False,
+            status_code=403,
+            text="Resource not accessible by integration ghp_ABC123",
+        )
+        post_check_run(
+            session=MagicMock(),
+            repo="o/r",
+            sha="abc",
+            conclusion="success",
+            title="ok",
+            summary="ok",
+        )
+        out = capsys.readouterr().out
+        assert "::warning::" in out
+        assert "ghp_ABC123" not in out
+        assert "[REDACTED]" in out
 
 
 class TestRedaction:
@@ -159,12 +187,12 @@ class TestRedaction:
 
 class TestReportToGitHub:
     @patch("src.github_client.post_comment")
-    @patch("src.github_client.post_status")
+    @patch("src.github_client.post_check_run")
     @patch("src.github_client.create_session")
-    def test_pr_number_zero_posts_comment(
+    def test_posts_check_run_and_comment_on_pr(
         self,
         mock_create_session,
-        mock_post_status,
+        mock_post_check_run,
         mock_post_comment,
         sample_report,
     ):
@@ -173,9 +201,75 @@ class TestReportToGitHub:
 
         report_to_github(sample_report, "ghp_fake", "owner/repo", 0, "abc123")
 
-        mock_post_status.assert_called_once()
+        mock_post_check_run.assert_called_once()
+        call_args = mock_post_check_run.call_args[0]
+        assert call_args[0] is session
+        assert call_args[1] == "owner/repo"
+        assert call_args[2] == "abc123"
+        assert call_args[3] == "success"  # PASS → success conclusion
+
         mock_post_comment.assert_called_once()
         assert mock_post_comment.call_args[0][0] is session
+
+    @patch("src.github_client.post_comment")
+    @patch("src.github_client.post_check_run")
+    @patch("src.github_client.create_session")
+    def test_no_comment_when_pr_number_is_none(
+        self,
+        mock_create_session,
+        mock_post_check_run,
+        mock_post_comment,
+        sample_report,
+    ):
+        mock_create_session.return_value = MagicMock()
+
+        report_to_github(sample_report, "ghp_fake", "owner/repo", None, "abc123")
+
+        mock_post_check_run.assert_called_once()
+        mock_post_comment.assert_not_called()
+
+    @patch("src.github_client.post_comment")
+    @patch("src.github_client.post_check_run")
+    @patch("src.github_client.create_session")
+    def test_check_run_uses_correct_conclusion_for_each_verdict(
+        self,
+        mock_create_session,
+        mock_post_check_run,
+        mock_post_comment,
+    ):
+        mock_create_session.return_value = MagicMock()
+        expected = {
+            Verdict.PASS: "success",
+            Verdict.FAIL: "failure",
+            Verdict.WARNING: "neutral",
+            Verdict.SKIP: "skipped",
+        }
+        for verdict, conclusion in expected.items():
+            mock_post_check_run.reset_mock()
+            report = Report(layers=[
+                LayerResult("layer1", verdict, "details", [], True),
+            ])
+            report_to_github(report, "ghp_fake", "o/r", None, "sha1")
+            actual_conclusion = mock_post_check_run.call_args[0][3]
+            assert actual_conclusion == conclusion, f"{verdict} should map to {conclusion}"
+
+    @patch("src.github_client.post_comment")
+    @patch("src.github_client.post_check_run")
+    @patch("src.github_client.create_session")
+    def test_check_run_summary_contains_report_markdown(
+        self,
+        mock_create_session,
+        mock_post_check_run,
+        mock_post_comment,
+        sample_report,
+    ):
+        mock_create_session.return_value = MagicMock()
+
+        report_to_github(sample_report, "ghp_fake", "owner/repo", 1, "abc123")
+
+        summary = mock_post_check_run.call_args[0][5]
+        assert "Layer 1" in summary
+        assert "92%" in summary
 
     @patch(
         "src.github_client.create_session",

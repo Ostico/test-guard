@@ -16,11 +16,11 @@ _VERDICT_EMOJI = {
     Verdict.SKIP: "⏭️",
 }
 
-_VERDICT_STATE = {
+_VERDICT_CONCLUSION = {
     Verdict.PASS: "success",
     Verdict.FAIL: "failure",
-    Verdict.WARNING: "success",  # Warnings don't block
-    Verdict.SKIP: "success",
+    Verdict.WARNING: "neutral",  # Non-blocking in status checks
+    Verdict.SKIP: "skipped",
 }
 
 _TOKEN_PATTERNS = (
@@ -35,7 +35,7 @@ def format_report(report: Report) -> str:
     """Format a Report as a Markdown PR comment."""
     emoji = _VERDICT_EMOJI[report.overall_verdict]
     lines = [
-        "## 🧪 Test Guard Report",
+        "## 🧪 Test-Guard Report",
         "",
     ]
 
@@ -82,27 +82,36 @@ def post_comment(
         )
 
 
-def post_status(
+_CHECK_RUN_NAME = "Test-Guard"
+
+
+def post_check_run(
     session: requests.Session,
     repo: str,
     sha: str,
-    state: str,
-    description: str,
+    conclusion: str,
+    title: str,
+    summary: str,
 ) -> None:
-    """Post a commit status check."""
-    url = f"{GITHUB_API_URL}/repos/{repo}/statuses/{sha}"
+    """Create a completed check run via the Checks API."""
+    url = f"{GITHUB_API_URL}/repos/{repo}/check-runs"
     resp = post_json(
         session,
         url,
         {
-            "state": state,
-            "description": description[:140],
-            "context": "test-guard",
+            "name": _CHECK_RUN_NAME,
+            "head_sha": sha,
+            "status": "completed",
+            "conclusion": conclusion,
+            "output": {
+                "title": title,
+                "summary": summary,
+            },
         },
     )
     if not resp.ok:
         print(
-            "::warning::Failed to post commit status "
+            "::warning::Failed to create check run "
             f"({resp.status_code}): {_redact_response_text(resp.text)}"
         )
 
@@ -114,23 +123,23 @@ def report_to_github(
     pr_number: int | None,
     sha: str,
 ) -> None:
-    """Post both the PR comment and commit status."""
+    """Post a check run and optionally a PR comment."""
     try:
         session = create_session(token)
 
-        # Always post status
-        state = _VERDICT_STATE[report.overall_verdict]
         desc_map = {
             Verdict.PASS: "All test adequacy checks passed",
             Verdict.FAIL: "Test adequacy issues found",
             Verdict.WARNING: "Test adequacy warnings (non-blocking)",
             Verdict.SKIP: "Analysis skipped",
         }
-        post_status(session, repo, sha, state, desc_map[report.overall_verdict])
+        conclusion = _VERDICT_CONCLUSION[report.overall_verdict]
+        summary = format_report(report)
+        post_check_run(
+            session, repo, sha, conclusion, desc_map[report.overall_verdict], summary,
+        )
 
-        # Post comment only on PRs
         if pr_number is not None:
-            body = format_report(report)
-            post_comment(session, repo, pr_number, body)
+            post_comment(session, repo, pr_number, summary)
     except Exception as exc:
         print(f"::warning::GitHub reporting failed: {_redact_response_text(str(exc), max_len=500)}")
