@@ -1,0 +1,56 @@
+# action.yml
+name: 'Test Guard'
+description: 'Hybrid PR test adequacy gate — coverage + heuristics + AI'
+author: 'your-org'
+
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  coverage-file:
+    description: 'Path to coverage report (cobertura XML, lcov, etc.). Optional — Layer 1 skips if not provided.'
+    required: false
+  coverage-threshold:
+    description: 'Minimum diff-coverage % to auto-pass (0-100).'
+    default: '80'
+  test-patterns:
+    description: 'Source→test file mapping. "auto" detects from project structure.'
+    default: 'auto'
+  exclude-patterns:
+    description: 'Comma-separated glob patterns to exclude from analysis.'
+    default: '*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,migrations/**,docs/**,*.sql'
+  ai-enabled:
+    description: 'Enable AI Layer 3 analysis (true/false).'
+    default: 'true'
+  ai-model:
+    description: 'GitHub Models model ID for AI analysis.'
+    default: 'openai/gpt-5-mini'
+  ai-confidence-threshold:
+    description: 'Minimum AI confidence to enforce fail verdict (0.0-1.0). Below this, fail becomes warning.'
+    default: '0.7'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      shell: bash
+      run: pip install -r ${{ github.action_path }}/requirements.txt
+
+    - name: Run Test Guard
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        INPUT_COVERAGE-FILE: ${{ inputs.coverage-file }}
+        INPUT_COVERAGE-THRESHOLD: ${{ inputs.coverage-threshold }}
+        INPUT_TEST-PATTERNS: ${{ inputs.test-patterns }}
+        INPUT_EXCLUDE-PATTERNS: ${{ inputs.exclude-patterns }}
+        INPUT_AI-ENABLED: ${{ inputs.ai-enabled }}
+        INPUT_AI-MODEL: ${{ inputs.ai-model }}
+        INPUT_AI-CONFIDENCE-THRESHOLD: ${{ inputs.ai-confidence-threshold }}
+      run: python ${{ github.action_path }}/src/main.py
