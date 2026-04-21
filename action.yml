@@ -53,4 +53,5 @@ runs:
         INPUT_AI-ENABLED: ${{ inputs.ai-enabled }}
         INPUT_AI-MODEL: ${{ inputs.ai-model }}
         INPUT_AI-CONFIDENCE-THRESHOLD: ${{ inputs.ai-confidence-threshold }}
+        PYTHONPATH: ${{ github.action_path }}
       run: python ${{ github.action_path }}/src/main.py
