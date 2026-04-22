@@ -33,6 +33,7 @@ class LayerResult:
     details: str
     file_verdicts: list[FileVerdict]
     short_circuit: bool = False
+    coverage_details: dict[str, float] | None = None
 
 
 @dataclass
@@ -43,17 +44,21 @@ class Report:
 
     @property
     def overall_verdict(self) -> Verdict:
-        """Determine overall verdict from all layers.
-
-        Priority: FAIL > WARNING > PASS.
-        If any layer short-circuited with PASS, and no subsequent
-        layer produced FAIL/WARNING, overall is PASS.
-        """
         verdicts = [lr.verdict for lr in self.layers]
         if verdicts and all(verdict == Verdict.SKIP for verdict in verdicts):
             return Verdict.SKIP
-        if Verdict.FAIL in verdicts:
+
+        layer3_results = [lr for lr in self.layers if lr.layer == "layer3"]
+        if layer3_results:
+            l3_verdict = layer3_results[-1].verdict
+            if l3_verdict != Verdict.SKIP:
+                return l3_verdict
+
+        non_skip = [v for v in verdicts if v != Verdict.SKIP]
+        if not non_skip:
+            return Verdict.SKIP
+        if Verdict.FAIL in non_skip:
             return Verdict.FAIL
-        if Verdict.WARNING in verdicts:
+        if Verdict.WARNING in non_skip:
             return Verdict.WARNING
         return Verdict.PASS

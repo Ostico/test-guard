@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-# pyright: reportUnknownMemberType=false
+# pyright: reportUnknownMemberType=false, reportPrivateUsage=false
 import sys
 import traceback
 
 import requests
 
 from src.config import Config, parse_config
-from src.github_api import GITHUB_API_URL, create_session, get_json, get_paginated, get_text
+from src.github_api import GITHUB_API_URL, create_session, get_json, get_paginated
 from src.github_client import format_report, report_to_github
 from src.layer1_coverage import run_layer1
-from src.layer2_heuristic import run_layer2
+from src.layer2_heuristic import _is_excluded, _is_test_file, _matches_source_pattern, run_layer2
 from src.layer3_ai import run_layer3
 from src.models import Report, Verdict
 
@@ -20,42 +20,32 @@ from src.models import Report, Verdict
 def _get_pr_context(
     config: Config,
     session: requests.Session,
-) -> tuple[list[str], list[str], str, dict[str, str]]:
-    """Fetch PR context from GitHub API.
-
-    Returns:
-        (changed_files, all_repo_files, head_sha, file_diffs)
-    """
-    # Get PR files
+) -> tuple[list[str], list[str], str, dict[str, str], set[str]]:
     pr_url = f"{GITHUB_API_URL}/repos/{config.repo}/pulls/{config.pr_number}/files"
     pr_files = get_paginated(session, pr_url)
 
     changed_files = [f["filename"] for f in pr_files]
-    file_diffs = {f["filename"]: f.get("patch", "") for f in pr_files if f.get("patch")}
+    file_diffs = {f["filename"]: f.get("patch", "") for f in pr_files}
+    deleted_files = {f["filename"] for f in pr_files if f.get("status") == "removed"}
 
-    # Get head SHA
     pr_detail_url = f"{GITHUB_API_URL}/repos/{config.repo}/pulls/{config.pr_number}"
     pr_detail = get_json(session, pr_detail_url)
     head_sha = pr_detail["head"]["sha"]
 
-    # Get repo file tree (for test-file lookup)
     tree_url = f"{GITHUB_API_URL}/repos/{config.repo}/git/trees/{head_sha}?recursive=1"
     tree_resp = get_json(session, tree_url)
     all_repo_files = [item["path"] for item in tree_resp.get("tree", []) if item["type"] == "blob"]
 
-    return changed_files, all_repo_files, head_sha, file_diffs
+    return changed_files, all_repo_files, head_sha, file_diffs, deleted_files
 
 
 def run_pipeline(config: Config) -> Report:
-    """Execute the full 3-layer pipeline.
-
-    Each layer can short-circuit the pipeline with a PASS verdict.
-    """
     report = Report()
     session = create_session(config.github_token)
 
-    # Fetch PR context
-    changed_files, all_repo_files, head_sha, file_diffs = _get_pr_context(config, session)
+    changed_files, all_repo_files, head_sha, file_diffs, deleted_files = _get_pr_context(
+        config, session,
+    )
 
     # === Layer 1: Coverage Gate ===
     l1 = run_layer1(config.coverage_file, config.coverage_threshold, changed_files)
@@ -67,7 +57,10 @@ def run_pipeline(config: Config) -> Report:
     # === Layer 2: File-Matching Heuristic ===
     l2 = run_layer2(changed_files, all_repo_files, config.test_patterns, config.exclude_patterns)
     report.layers.append(l2)
-    if l2.short_circuit:
+
+    if config.ai_enabled:
+        l2.short_circuit = False
+    elif l2.short_circuit:
         report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)
         return report
 
@@ -76,29 +69,30 @@ def run_pipeline(config: Config) -> Report:
         report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)
         return report
 
-    # Collect files that need AI review (FAIL or WARNING from Layer 2)
-    files_for_ai = [
-        fv.file for fv in l2.file_verdicts if fv.verdict in (Verdict.FAIL, Verdict.WARNING)
-    ]
-    ai_diffs = {f: file_diffs.get(f, "") for f in files_for_ai if f in file_diffs}
+    source_diffs: dict[str, str] = {}
+    test_diffs: dict[str, str] = {}
+    for filepath, diff in file_diffs.items():
+        if _is_excluded(filepath, config.exclude_patterns):
+            continue
+        if _is_test_file(filepath, config.test_patterns):
+            test_diffs[filepath] = diff
+        elif _matches_source_pattern(filepath, config.test_patterns):
+            source_diffs[filepath] = diff
 
-    # Fetch test file contents for AI context
-    test_contents: dict[str, str] = {}
-    for fv in l2.file_verdicts:
-        if fv.matched_test is not None:
-            content_url = (
-                f"{GITHUB_API_URL}/repos/{config.repo}/contents/{fv.matched_test}?ref={head_sha}"
-            )
-            text = get_text(session, content_url)
-            if text is not None:
-                test_contents[fv.matched_test] = text
+    l2_matched_tests: dict[str, str | None] = {
+        fv.file: fv.matched_test for fv in l2.file_verdicts
+    }
 
     l3 = run_layer3(
-        ai_diffs,
-        test_contents,
-        config.ai_model,
-        config.github_token,
-        config.ai_confidence_threshold,
+        source_diffs=source_diffs,
+        deleted_files=deleted_files,
+        test_diffs=test_diffs,
+        l2_matched_tests=l2_matched_tests,
+        coverage_details=l1.coverage_details,
+        coverage_threshold=config.coverage_threshold,
+        model=config.ai_model,
+        token=config.github_token,
+        confidence_threshold=config.ai_confidence_threshold,
     )
     report.layers.append(l3)
 

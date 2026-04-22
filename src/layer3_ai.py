@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import TypedDict, cast
 
@@ -20,6 +22,176 @@ from openai.types.shared_params import ResponseFormatJSONSchema
 from openai.types.shared_params.response_format_json_schema import JSONSchema
 
 from src.models import FileVerdict, LayerResult, Verdict
+
+
+class TestRelevance(Enum):
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
+
+
+def compute_test_relevance(
+    source_file: str,
+    changed_test_files: list[str],
+    l2_matched_test: str | None,
+    test_diffs: dict[str, str],
+) -> TestRelevance:
+    if not changed_test_files:
+        return TestRelevance.NO
+
+    source_stem = PurePosixPath(source_file).stem.lower()
+
+    for test_file in changed_test_files:
+        if l2_matched_test is not None and test_file == l2_matched_test:
+            return TestRelevance.YES
+        if source_stem in PurePosixPath(test_file).stem.lower():
+            return TestRelevance.YES
+        diff_text = test_diffs.get(test_file, "")
+        if source_stem in diff_text.lower():
+            return TestRelevance.YES
+
+    return TestRelevance.UNKNOWN
+
+
+_IMPORT_RE = re.compile(
+    r"(?:"
+    r"^import\s"
+    r"|^from\s+\S+\s+import\s"
+    r"|require\s*\("
+    r"|^include\s"
+    r"|^#include\b"
+    r"|^use\s"
+    r")",
+    re.IGNORECASE,
+)
+
+_COMMENT_PREFIXES = ("//", "/*", "*", "--", "#")
+
+
+def is_trivial_diff(diff: str) -> bool:
+    for line in diff.splitlines():
+        if not (line.startswith("+") or line.startswith("-")):
+            continue
+        content = line[1:].strip()
+        if not content:
+            continue
+        if _IMPORT_RE.search(content):
+            return False
+        if content.startswith(_COMMENT_PREFIXES):
+            continue
+        return False
+    return True
+
+
+def evaluate_file_shortcut(
+    source_file: str,
+    diff: str,
+    is_deleted: bool,
+    coverage_details: dict[str, float] | None,
+    coverage_threshold: float,
+    test_relevance: TestRelevance,
+) -> Verdict | None:
+    if is_deleted:
+        return Verdict.SKIP
+
+    if is_trivial_diff(diff):
+        return Verdict.SKIP
+
+    has_coverage = coverage_details is not None and source_file in coverage_details
+    coverage_ok = (
+        has_coverage
+        and coverage_details is not None
+        and coverage_details[source_file] >= coverage_threshold
+    )
+
+    if coverage_ok:
+        return Verdict.PASS
+
+    if test_relevance == TestRelevance.NO:
+        return Verdict.FAIL
+
+    if has_coverage and test_relevance == TestRelevance.YES:
+        return Verdict.FAIL
+
+    return None
+
+
+@dataclass
+class Layer3Result:
+    per_file_verdicts: dict[str, Verdict]
+    execution_status: str
+
+    @property
+    def verdict(self) -> Verdict:
+        if self.execution_status == "ERROR":
+            return Verdict.SKIP
+
+        verdicts = list(self.per_file_verdicts.values())
+        if not verdicts:
+            return Verdict.PASS
+
+        non_skip = [v for v in verdicts if v != Verdict.SKIP]
+        if not non_skip:
+            return Verdict.PASS
+
+        if Verdict.FAIL in non_skip:
+            return Verdict.FAIL
+        if Verdict.WARNING in non_skip:
+            return Verdict.WARNING
+        return Verdict.PASS
+
+
+def _build_ai_prompt(
+    files_for_ai: list[str],
+    source_diffs: dict[str, str],
+    test_diffs: dict[str, str],
+    coverage_details: dict[str, float] | None,
+    coverage_threshold: float,
+    matched_tests: dict[str, str | None],
+) -> str:
+    if not files_for_ai:
+        return ""
+
+    matched_test_to_sources: dict[str, list[str]] = {}
+    for src, test in matched_tests.items():
+        if test is not None:
+            matched_test_to_sources.setdefault(test, []).append(src)
+
+    parts: list[str] = []
+
+    parts.append("## Coverage Summary")
+    parts.append("Per-file changed-line coverage:")
+    for src in files_for_ai:
+        if coverage_details is not None and src in coverage_details:
+            pct = coverage_details[src]
+            parts.append(
+                f"- {src}: {pct:.0f}% of changed lines covered"
+                f" (threshold: {coverage_threshold:.0f}%)"
+            )
+        else:
+            parts.append(f"- {src}: no coverage data available")
+    parts.append("")
+
+    parts.append("## Source File Changes (files needing AI review)")
+    parts.append("")
+    for src in files_for_ai:
+        parts.append(f"### {src}")
+        diff = source_diffs.get(src, "")
+        parts.append(f"```diff\n{_sanitize_diff(diff)}\n```")
+        parts.append("")
+
+    if test_diffs:
+        parts.append("## Test File Changes (relevant to files above)")
+        parts.append("")
+        for test_file, diff in test_diffs.items():
+            sources = matched_test_to_sources.get(test_file)
+            annotation = f"matched to {', '.join(sources)}" if sources else "candidate"
+            parts.append(f"### {test_file} (modified, {annotation})")
+            parts.append(f"```diff\n{_sanitize_diff(diff)}\n```")
+            parts.append("")
+
+    return "\n".join(parts)
+
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "test_adequacy.txt"
 
@@ -86,35 +258,6 @@ def _sanitize_diff(diff: str, max_chars: int = 10_000) -> str:
 def _load_system_prompt() -> str:
     return _PROMPT_PATH.read_text().strip()
 
-
-def _build_prompt(
-    file_diffs: dict[str, str],
-    test_contents: dict[str, str],
-) -> str:
-    """Build the user prompt with diff context and test files."""
-    parts: list[str] = []
-
-    for filepath, diff in file_diffs.items():
-        parts.append(f"## Source file: {filepath}")
-        parts.append(f"```diff\n{_sanitize_diff(diff)}\n```")
-
-        # Find matching test content
-        matching_tests = [
-            (tf, tc)
-            for tf, tc in test_contents.items()
-            if PurePosixPath(filepath).stem in tf
-        ]
-
-        if matching_tests:
-            for test_file, test_code in matching_tests:
-                parts.append(f"### Test file: {test_file}")
-                parts.append(f"```\n{test_code}\n```")
-        else:
-            parts.append("### No test file found for this source file.")
-
-        parts.append("")
-
-    return "\n".join(parts)
 
 
 def _call_github_models(
@@ -184,70 +327,97 @@ def _parse_ai_response(
 
 
 def run_layer3(
-    file_diffs: dict[str, str],
-    test_contents: dict[str, str],
+    source_diffs: dict[str, str],
+    deleted_files: set[str],
+    test_diffs: dict[str, str],
+    l2_matched_tests: dict[str, str | None],
+    coverage_details: dict[str, float] | None,
+    coverage_threshold: float,
     model: str,
     token: str,
     confidence_threshold: float,
 ) -> LayerResult:
-    """Execute Layer 3 AI analysis.
-
-    Args:
-        file_diffs: {filepath: diff_text} for files needing AI review.
-        test_contents: {test_filepath: file_content} for related test files.
-        model: Model identifier (e.g., "openai/gpt-5-mini").
-        token: GitHub token for Models API authentication.
-        confidence_threshold: Minimum confidence to enforce verdict (0.0-1.0).
-
-    Returns:
-        LayerResult with AI verdict and per-file analysis.
-    """
-    if not file_diffs:
+    if not source_diffs:
         return LayerResult(
             layer="layer3",
             verdict=Verdict.PASS,
-            details="No files required AI review.",
+            details="No source files to evaluate.",
             file_verdicts=[],
             short_circuit=False,
         )
 
-    try:
-        system_prompt = _load_system_prompt()
-        user_prompt = _build_prompt(file_diffs, test_contents)
-        raw_response = _call_github_models(model, system_prompt, user_prompt, token)
-        verdict, confidence, file_verdicts = _parse_ai_response(raw_response)
-    except Exception as exc:
-        return LayerResult(
-            layer="layer3",
-            verdict=Verdict.SKIP,
-            details=f"AI analysis failed: {exc}",
-            file_verdicts=[],
-            short_circuit=False,
+    changed_test_files = list(test_diffs.keys())
+    per_file_verdicts: dict[str, Verdict] = {}
+    files_for_ai: list[str] = []
+    shortcut_reasons: dict[str, str] = {}
+
+    for source_file, diff in source_diffs.items():
+        is_deleted = source_file in deleted_files
+        relevance = compute_test_relevance(
+            source_file,
+            changed_test_files,
+            l2_matched_tests.get(source_file),
+            test_diffs,
+        )
+        verdict = evaluate_file_shortcut(
+            source_file, diff, is_deleted,
+            coverage_details, coverage_threshold, relevance,
+        )
+        if verdict is not None:
+            per_file_verdicts[source_file] = verdict
+            shortcut_reasons[source_file] = f"shortcut → {verdict.value}"
+        else:
+            files_for_ai.append(source_file)
+
+    execution_status = "OK"
+    ai_file_verdicts: list[FileVerdict] = []
+
+    if files_for_ai:
+        try:
+            system_prompt = _load_system_prompt()
+            user_prompt = _build_ai_prompt(
+                files_for_ai, source_diffs, test_diffs,
+                coverage_details, coverage_threshold, l2_matched_tests,
+            )
+            raw_response = _call_github_models(model, system_prompt, user_prompt, token)
+            _, ai_confidence, ai_file_verdicts = _parse_ai_response(raw_response)
+
+            for fv in ai_file_verdicts:
+                fv_verdict = fv.verdict
+                if ai_confidence < confidence_threshold and fv_verdict == Verdict.FAIL:
+                    fv_verdict = Verdict.WARNING
+                per_file_verdicts[fv.file] = fv_verdict
+
+        except Exception:
+            execution_status = "ERROR"
+
+    l3 = Layer3Result(per_file_verdicts, execution_status)
+
+    all_file_verdicts: list[FileVerdict] = []
+    for src, v in per_file_verdicts.items():
+        reason = shortcut_reasons.get(src, "")
+        if not reason:
+            matched_fv = [fv for fv in ai_file_verdicts if fv.file == src]
+            reason = matched_fv[0].reason if matched_fv else "AI judgment"
+        all_file_verdicts.append(
+            FileVerdict(file=src, verdict=v, reason=reason, layer="layer3")
         )
 
-    if verdict == Verdict.SKIP:
-        return LayerResult(
-            layer="layer3",
-            verdict=Verdict.SKIP,
-            details="AI returned unparseable response — skipping.",
-            file_verdicts=file_verdicts,
-            short_circuit=False,
-        )
-
-    # If confidence is below threshold, downgrade FAIL to WARNING
-    if confidence < confidence_threshold and verdict == Verdict.FAIL:
-        verdict = Verdict.WARNING
-        details = (
-            f"AI verdict: fail → warning (confidence {confidence:.0%} "
-            f"below threshold {confidence_threshold:.0%})"
-        )
+    if execution_status == "ERROR":
+        details = "AI analysis failed — falling back to L1+L2."
+    elif not files_for_ai:
+        details = "All files resolved by deterministic shortcuts."
     else:
-        details = f"AI verdict: {verdict.value} (confidence: {confidence:.0%})"
+        shortcut_count = len(source_diffs) - len(files_for_ai)
+        details = (
+            f"Evaluated {len(source_diffs)} files:"
+            f" {len(files_for_ai)} via AI, {shortcut_count} via shortcuts."
+        )
 
     return LayerResult(
         layer="layer3",
-        verdict=verdict,
+        verdict=l3.verdict,
         details=details,
-        file_verdicts=file_verdicts,
+        file_verdicts=all_file_verdicts,
         short_circuit=False,
     )
