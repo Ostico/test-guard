@@ -1,7 +1,9 @@
-"""Layer 3: GPT-5-mini AI judgment via GitHub Models API.
+"""Layer 3: Per-file evaluator (deterministic shortcuts + AI fallthrough).
 
-Only invoked for files that Layer 2 flagged as FAIL or WARNING.
-Sends focused diffs + test content and gets structured JSON verdict.
+Evaluates each source file through an 8-gate shortcut truth table using
+coverage data from L1 and test-match data from L2. Files that cannot be
+resolved deterministically fall through to the GitHub Models AI for a
+structured JSON verdict with confidence-based downgrade.
 """
 
 from __future__ import annotations

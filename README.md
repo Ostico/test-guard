@@ -1,10 +1,10 @@
 # 🧪 Test-Guard
 
-**A GitHub Action that gates pull requests on test adequacy.** Test-Guard runs a 3-layer hybrid pipeline — fast deterministic checks first, semantic AI analysis only for files that can't be resolved automatically.
+**A GitHub Action that gates pull requests on test adequacy.** Test-Guard runs a 3-layer hybrid pipeline — two fast data providers (coverage + test matching) feed a per-file evaluator that uses deterministic shortcuts first and AI only for ambiguous files.
 
 ## How It Works
 
-Test-Guard evaluates every source file in your PR independently through three layers:
+Test-Guard evaluates every source file in your PR independently. Layer 1 and Layer 2 extract data (coverage percentages, test-file matches); Layer 3 combines that data with its own analysis to produce the authoritative verdict:
 
 ```text
 PR Opened
@@ -25,13 +25,13 @@ Layer 3: Per-File Analysis
    Layer 3 verdict overrides all other layers
 ```
 
-**Key design principle:** Layer 3 performs a from-scratch per-file evaluation. It doesn't inherit Layer 2's verdicts — it uses Layer 2 hints as advisory input alongside coverage data, test diffs, and triviality detection to reach its own conclusions.
+**Key design principle:** Layer 3 performs a from-scratch per-file evaluation. It doesn't inherit Layer 2's verdicts — it uses L1 coverage data and L2 matched-test hints as inputs alongside test diffs and triviality detection to reach its own conclusions.
 
 ---
 
-## The 3-Layer Pipeline
+## The Pipeline
 
-### Layer 1: Diff Coverage
+### Layer 1: Diff Coverage (data provider + fast exit)
 
 Calculates the percentage of changed lines covered by existing tests, per file.
 
@@ -40,9 +40,9 @@ Calculates the percentage of changed lines covered by existing tests, per file.
 - **Output:** Per-file coverage percentages forwarded to Layer 3 for use in shortcuts.
 - **SKIP:** No coverage file provided or diff-cover fails. Pipeline continues.
 
-### Layer 2: File-Matching Heuristic
+### Layer 2: File-Matching Heuristic (data provider + fallback gate)
 
-Checks whether each modified source file has a corresponding test file using naming conventions across 19 languages.
+Matches each modified source file to a corresponding test file using naming conventions across 19 languages.
 
 - **Silently skips:** Excluded files, test files themselves, unrecognized extensions.
 - **Per-file verdicts:**
@@ -52,9 +52,9 @@ Checks whether each modified source file has a corresponding test file using nam
 - **Advisory mode (AI enabled):** Layer 2 never short-circuits. Its matched-test hints feed into Layer 3 but don't determine the final verdict.
 - **Gate mode (AI disabled):** Layer 2 short-circuits on all-PASS, and its verdict is final.
 
-### Layer 3: Per-File AI Analysis
+### Layer 3: Per-File Evaluator (authoritative)
 
-The authoritative layer. Evaluates each source file through deterministic shortcuts first, falling back to AI only for files that can't be resolved.
+Combines coverage data from L1 and test-match hints from L2 with its own triviality detection and AI analysis. Evaluates each source file through deterministic shortcuts first, falling back to AI only for files that can't be resolved.
 
 **Deterministic shortcuts (Gates 1–8):**
 

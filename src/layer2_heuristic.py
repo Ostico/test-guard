@@ -1,8 +1,12 @@
-"""Layer 2: File-matching heuristic.
+"""Layer 2: Test-matching data provider + fallback gate.
 
-Checks if changed source files have corresponding test files.
-Classifies each file as PASS (test modified), WARNING (test exists, not modified),
-FAIL (no test found), or SKIP (excluded).
+Matches source files to test files via naming conventions and provides:
+  - matched_test per source file (consumed by Layer 3's compute_test_relevance)
+  - file classification helpers (_is_test_file, _is_excluded, _matches_source_pattern)
+
+When AI is enabled L2 runs in advisory mode (short_circuit forced False) — its
+verdicts appear in the report but do not gate the PR. When AI is disabled L2 is
+the secondary gate after L1.
 """
 
 from __future__ import annotations

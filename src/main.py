@@ -1,4 +1,10 @@
-"""Main orchestrator — runs the 3-layer pipeline."""
+"""Main orchestrator — runs the 3-layer pipeline.
+
+L1 and L2 are data providers that feed L3 (the actual evaluator when AI is
+enabled). L1 extracts coverage_details, L2 extracts matched_test mappings
+and provides file classification helpers. Both retain independent gating
+for the AI-disabled fallback path.
+"""
 
 from __future__ import annotations
 

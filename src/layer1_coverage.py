@@ -1,7 +1,9 @@
-"""Layer 1: Diff-coverage gate.
+"""Layer 1: Diff-coverage data provider + fast exit.
 
-Computes test coverage on changed/new lines using diff-cover.
-If coverage >= threshold, short-circuit with PASS.
+Runs diff-cover to extract per-file changed-line coverage. When every source
+file meets the threshold the pipeline short-circuits (skips L2, L3, and the
+AI call entirely). Otherwise the per-file coverage_details are forwarded to
+Layer 3 for use in the shortcut truth table and AI prompt.
 """
 
 from __future__ import annotations
