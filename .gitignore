@@ -10,9 +10,13 @@ build/
 
 # Test / coverage artifacts
 .pytest_cache/
+.coverage
 coverage.xml
 htmlcov/
 *.lcov
+
+# Design docs (local only)
+TODO.md
 
 # IDE
 .idea/
