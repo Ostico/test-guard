@@ -36,17 +36,7 @@ Set confidence to reflect evidence quality, not just your certainty:
 - **0.5–0.7**: Partial evidence — either coverage data OR test diffs, but not both.
 - **0.2–0.5**: Source diffs only, no coverage data, ambiguous test relevance.
 
-## Output Format
-
-Respond with JSON matching this exact schema:
-```json
-{
-  "verdict": "pass|fail|warning",
-  "confidence": 0.0-1.0,
-  "files": [
-    {"file": "src/example.py", "verdict": "pass|fail|warning", "reason": "one sentence"}
-  ]
-}
-```
+## Output
 
 One entry per source file. Be concise — one sentence per file reason.
+The response schema is enforced; just return valid JSON.

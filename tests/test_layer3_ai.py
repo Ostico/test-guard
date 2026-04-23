@@ -3,20 +3,37 @@
 import json
 from unittest.mock import MagicMock, patch
 
+from openai import APIStatusError
+
 import src.layer3_ai as layer3_ai
 from src.layer3_ai import (
     Layer3Result,
     Relevance,
+    _batch_files,
     _build_ai_prompt,
+    _call_ai_for_batch,
     _call_github_models,
+    _estimate_file_cost,
+    _estimate_tokens,
+    _filter_test_diffs_for_batch,
+    _is_model_forbidden,
+    _is_retryable_size_error,
     _parse_ai_response,
+    _resolve_models,
     _sanitize_diff,
+    _validate_batch_verdicts,
     compute_test_relevance,
     evaluate_file_shortcut,
     is_trivial_diff,
     run_layer3,
 )
-from src.models import Verdict
+from src.models import FileVerdict, Verdict
+
+
+def _make_api_error(status_code: int, message: str = "error") -> APIStatusError:
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    return APIStatusError(message=message, response=mock_response, body=None)
 
 
 class TestSanitizeDiff:
@@ -757,6 +774,20 @@ class TestBuildAiPrompt:
         assert "55" in prompt
         assert "40" in prompt
 
+    def test_max_diff_chars_truncates_source_and_test(self):
+        long_diff = "x" * 20_000
+        prompt = _build_ai_prompt(
+            files_for_ai=["src/a.py"],
+            source_diffs={"src/a.py": long_diff},
+            test_diffs={"tests/test_a.py": long_diff},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            matched_tests={"src/a.py": "tests/test_a.py"},
+            max_diff_chars=100,
+        )
+        assert prompt.count("...[truncated]") == 2
+        assert len(prompt) < 5000
+
 
 class TestIntegrationWorkedExamples:
     """Integration tests matching §4 worked examples from TODO.md."""
@@ -948,3 +979,696 @@ class TestIntegrationWorkedExamples:
             confidence_threshold=0.7,
         )
         assert result.verdict == Verdict.PASS
+
+
+# ---------------------------------------------------------------------------
+# Smart batching & model fallback tests
+# ---------------------------------------------------------------------------
+
+
+class TestEstimateTokens:
+    def test_empty_string_returns_one(self):
+        assert _estimate_tokens("") == 1
+
+    def test_four_chars_returns_two(self):
+        assert _estimate_tokens("abcd") == 2
+
+    def test_eight_chars_returns_three(self):
+        assert _estimate_tokens("abcdefgh") == 3
+
+    def test_single_char_returns_one(self):
+        assert _estimate_tokens("x") == 1
+
+    def test_large_text(self):
+        assert _estimate_tokens("a" * 4000) == 1001
+
+
+class TestEstimateFileCost:
+    def test_source_only_no_matched_test(self):
+        cost = _estimate_file_cost(
+            "src/a.py",
+            source_diffs={"src/a.py": "x" * 100},
+            test_diffs={},
+            matched_tests={"src/a.py": None},
+        )
+        expected = 25 + _estimate_tokens(_sanitize_diff("x" * 100))
+        assert cost == expected
+
+    def test_source_with_matched_test_in_test_diffs(self):
+        cost = _estimate_file_cost(
+            "src/a.py",
+            source_diffs={"src/a.py": "x" * 100},
+            test_diffs={"tests/test_a.py": "y" * 200},
+            matched_tests={"src/a.py": "tests/test_a.py"},
+        )
+        src_tokens = _estimate_tokens(_sanitize_diff("x" * 100))
+        test_tokens = _estimate_tokens(_sanitize_diff("y" * 200))
+        assert cost == 25 + src_tokens + 25 + test_tokens
+
+    def test_matched_test_not_in_test_diffs_ignored(self):
+        cost = _estimate_file_cost(
+            "src/a.py",
+            source_diffs={"src/a.py": "x" * 100},
+            test_diffs={},
+            matched_tests={"src/a.py": "tests/test_a.py"},
+        )
+        expected = 25 + _estimate_tokens(_sanitize_diff("x" * 100))
+        assert cost == expected
+
+    def test_respects_max_diff_chars(self):
+        cost_default = _estimate_file_cost(
+            "src/a.py",
+            source_diffs={"src/a.py": "x" * 20_000},
+            test_diffs={},
+            matched_tests={"src/a.py": None},
+        )
+        cost_tight = _estimate_file_cost(
+            "src/a.py",
+            source_diffs={"src/a.py": "x" * 20_000},
+            test_diffs={},
+            matched_tests={"src/a.py": None},
+            max_diff_chars=3000,
+        )
+        assert cost_tight < cost_default
+
+
+class TestFilterTestDiffsForBatch:
+    def test_matched_test_in_batch_included(self):
+        result = _filter_test_diffs_for_batch(
+            batch_files=["src/a.py"],
+            test_diffs={"tests/test_a.py": "diff_a"},
+            matched_tests={"src/a.py": "tests/test_a.py"},
+        )
+        assert "tests/test_a.py" in result
+
+    def test_matched_test_outside_batch_included_as_candidate(self):
+        result = _filter_test_diffs_for_batch(
+            batch_files=["src/a.py"],
+            test_diffs={"tests/test_b.py": "diff_b"},
+            matched_tests={"src/a.py": None, "src/b.py": "tests/test_b.py"},
+        )
+        assert "tests/test_b.py" in result
+
+    def test_shared_test_matched_outside_batch_still_included(self):
+        """BUG 4: A test matched to an out-of-batch file should still appear
+        as a candidate so the AI can judge relevance."""
+        result = _filter_test_diffs_for_batch(
+            batch_files=["src/auth.py"],
+            test_diffs={
+                "conftest.py": "diff_conftest",
+                "tests/test_auth.py": "diff_auth",
+            },
+            matched_tests={
+                "src/auth.py": "tests/test_auth.py",
+                "src/config.py": "conftest.py",
+            },
+        )
+        assert "tests/test_auth.py" in result
+        assert "conftest.py" in result
+
+    def test_unmatched_candidate_included(self):
+        result = _filter_test_diffs_for_batch(
+            batch_files=["src/a.py"],
+            test_diffs={"tests/test_helpers.py": "diff_h"},
+            matched_tests={"src/a.py": None},
+        )
+        assert "tests/test_helpers.py" in result
+
+    def test_combination_includes_all_test_diffs(self):
+        result = _filter_test_diffs_for_batch(
+            batch_files=["src/a.py"],
+            test_diffs={
+                "tests/test_a.py": "diff_a",
+                "tests/test_b.py": "diff_b",
+                "tests/test_utils.py": "diff_u",
+            },
+            matched_tests={
+                "src/a.py": "tests/test_a.py",
+                "src/b.py": "tests/test_b.py",
+            },
+        )
+        assert "tests/test_a.py" in result
+        assert "tests/test_b.py" in result
+        assert "tests/test_utils.py" in result
+
+    def test_empty_batch_includes_all_as_candidates(self):
+        result = _filter_test_diffs_for_batch(
+            batch_files=[],
+            test_diffs={
+                "tests/test_a.py": "diff_a",
+                "tests/test_unmatched.py": "diff_u",
+            },
+            matched_tests={"src/a.py": "tests/test_a.py"},
+        )
+        assert "tests/test_a.py" in result
+        assert "tests/test_unmatched.py" in result
+
+
+class TestBatchFiles:
+    def test_empty_input(self):
+        assert _batch_files([], {}, {}, {}) == []
+
+    def test_single_file_fits_one_batch(self):
+        batches = _batch_files(
+            ["src/a.py"],
+            source_diffs={"src/a.py": "small diff"},
+            test_diffs={},
+            matched_tests={"src/a.py": None},
+            token_budget=5000,
+        )
+        assert batches == [["src/a.py"]]
+
+    def test_multiple_small_files_pack_into_one_batch(self):
+        batches = _batch_files(
+            ["src/a.py", "src/b.py"],
+            source_diffs={"src/a.py": "diff_a", "src/b.py": "diff_b"},
+            test_diffs={},
+            matched_tests={"src/a.py": None, "src/b.py": None},
+            token_budget=5000,
+        )
+        assert len(batches) == 1
+        assert batches[0] == ["src/a.py", "src/b.py"]
+
+    def test_large_files_split_into_multiple_batches(self):
+        big_diff = "x" * 10_000
+        batches = _batch_files(
+            ["src/a.py", "src/b.py", "src/c.py"],
+            source_diffs={
+                "src/a.py": big_diff,
+                "src/b.py": big_diff,
+                "src/c.py": big_diff,
+            },
+            test_diffs={},
+            matched_tests={
+                "src/a.py": None,
+                "src/b.py": None,
+                "src/c.py": None,
+            },
+            token_budget=3000,
+        )
+        assert len(batches) > 1
+        all_files = [f for batch in batches for f in batch]
+        assert sorted(all_files) == ["src/a.py", "src/b.py", "src/c.py"]
+
+    def test_oversized_single_file_gets_own_batch(self):
+        huge_diff = "x" * 50_000
+        batches = _batch_files(
+            ["src/huge.py", "src/small.py"],
+            source_diffs={"src/huge.py": huge_diff, "src/small.py": "tiny"},
+            test_diffs={},
+            matched_tests={"src/huge.py": None, "src/small.py": None},
+            token_budget=2500,
+        )
+        assert len(batches) == 2
+        assert batches[0] == ["src/huge.py"]
+        assert batches[1] == ["src/small.py"]
+
+    def test_candidate_tests_counted_in_overhead(self):
+        big_candidate = "y" * 8000
+        batches_with = _batch_files(
+            ["src/a.py", "src/b.py"],
+            source_diffs={"src/a.py": "diff_a", "src/b.py": "diff_b"},
+            test_diffs={"tests/test_unmatched.py": big_candidate},
+            matched_tests={"src/a.py": None, "src/b.py": None},
+            token_budget=3000,
+        )
+        batches_without = _batch_files(
+            ["src/a.py", "src/b.py"],
+            source_diffs={"src/a.py": "diff_a", "src/b.py": "diff_b"},
+            test_diffs={},
+            matched_tests={"src/a.py": None, "src/b.py": None},
+            token_budget=3000,
+        )
+        assert len(batches_with) >= len(batches_without)
+
+
+class TestIsRetryableSizeError:
+    def test_413_with_too_large_message(self):
+        exc = _make_api_error(413, "Request body too large for model")
+        assert _is_retryable_size_error(exc) is True
+
+    def test_400_with_too_large_message(self):
+        exc = _make_api_error(400, "Request body too large for model")
+        assert _is_retryable_size_error(exc) is True
+
+    def test_413_without_too_large_message(self):
+        exc = _make_api_error(413, "Unknown server error")
+        assert _is_retryable_size_error(exc) is False
+
+    def test_400_context_length_exceeded(self):
+        exc = _make_api_error(400, "context length exceeded")
+        assert _is_retryable_size_error(exc) is True
+
+    def test_400_maximum_context_length(self):
+        exc = _make_api_error(
+            400, "maximum context length is 8192 tokens"
+        )
+        assert _is_retryable_size_error(exc) is True
+
+    def test_413_content_too_large(self):
+        exc = _make_api_error(413, "Content Too Large")
+        assert _is_retryable_size_error(exc) is True
+
+    def test_500_error(self):
+        exc = _make_api_error(500, "Internal server error")
+        assert _is_retryable_size_error(exc) is False
+
+    def test_regular_exception(self):
+        assert _is_retryable_size_error(RuntimeError("connection failed")) is False
+
+
+class TestIsModelForbidden:
+    def test_403_is_forbidden(self):
+        assert _is_model_forbidden(_make_api_error(403, "Forbidden")) is True
+
+    def test_401_is_not_forbidden(self):
+        assert _is_model_forbidden(_make_api_error(401, "Unauthorized")) is False
+
+    def test_regular_exception(self):
+        assert _is_model_forbidden(RuntimeError("timeout")) is False
+
+
+class TestResolveModels:
+    def test_default_model_returns_full_chain(self):
+        models = _resolve_models("openai/gpt-4.1-mini")
+        assert models == ["openai/gpt-4.1-mini", "openai/gpt-4.1-nano"]
+
+    def test_custom_model_returns_single(self):
+        assert _resolve_models("openai/gpt-5-mini") == ["openai/gpt-5-mini"]
+
+    def test_nano_alone_returns_single(self):
+        assert _resolve_models("openai/gpt-4.1-nano") == ["openai/gpt-4.1-nano"]
+
+
+class TestCallAiForBatch:
+    @patch("src.layer3_ai._call_github_models")
+    def test_success_on_first_try(self, mock_call: MagicMock):
+        mock_call.return_value = '{"verdict":"pass","confidence":0.9,"files":[]}'
+        raw, exc = _call_ai_for_batch(
+            batch_files=["src/a.py"],
+            source_diffs={"src/a.py": "diff"},
+            test_diffs={},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            matched_tests={"src/a.py": None},
+            model="openai/gpt-4.1-mini",
+            system_prompt="system",
+            token="ghp_fake",
+        )
+        assert raw is not None
+        assert exc is None
+        mock_call.assert_called_once()
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_413_retries_with_tighter_truncation(self, mock_call: MagicMock):
+        error_413 = _make_api_error(413, "Request body too large for model")
+        mock_call.side_effect = [
+            error_413,
+            '{"verdict":"pass","confidence":0.9,"files":[]}',
+        ]
+        raw, exc = _call_ai_for_batch(
+            batch_files=["src/a.py"],
+            source_diffs={"src/a.py": "x" * 20_000},
+            test_diffs={},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            matched_tests={"src/a.py": None},
+            model="openai/gpt-4.1-mini",
+            system_prompt="system",
+            token="ghp_fake",
+        )
+        assert raw is not None
+        assert exc is None
+        assert mock_call.call_count == 2
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_413_retry_also_fails(self, mock_call: MagicMock):
+        error_413 = _make_api_error(413, "Request body too large for model")
+        mock_call.side_effect = [error_413, error_413]
+        raw, exc = _call_ai_for_batch(
+            batch_files=["src/a.py"],
+            source_diffs={"src/a.py": "x" * 20_000},
+            test_diffs={},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            matched_tests={"src/a.py": None},
+            model="openai/gpt-4.1-mini",
+            system_prompt="system",
+            token="ghp_fake",
+        )
+        assert raw is None
+        assert exc is not None
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_non_retryable_error_returns_immediately(self, mock_call: MagicMock):
+        mock_call.side_effect = RuntimeError("connection lost")
+        raw, exc = _call_ai_for_batch(
+            batch_files=["src/a.py"],
+            source_diffs={"src/a.py": "diff"},
+            test_diffs={},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            matched_tests={"src/a.py": None},
+            model="openai/gpt-4.1-mini",
+            system_prompt="system",
+            token="ghp_fake",
+        )
+        assert raw is None
+        assert exc is not None
+        assert "connection lost" in str(exc)
+        mock_call.assert_called_once()
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_includes_all_test_diffs_in_batch_prompt(self, mock_call: MagicMock):
+        mock_call.return_value = '{"verdict":"pass","confidence":0.9,"files":[]}'
+        _call_ai_for_batch(
+            batch_files=["src/a.py"],
+            source_diffs={"src/a.py": "diff"},
+            test_diffs={
+                "tests/test_a.py": "matched_diff",
+                "tests/test_b.py": "outside_batch_diff",
+            },
+            coverage_details=None,
+            coverage_threshold=80.0,
+            matched_tests={
+                "src/a.py": "tests/test_a.py",
+                "src/b.py": "tests/test_b.py",
+            },
+            model="openai/gpt-4.1-mini",
+            system_prompt="system",
+            token="ghp_fake",
+        )
+        user_prompt = mock_call.call_args[0][2]
+        assert "matched_diff" in user_prompt
+        assert "outside_batch_diff" in user_prompt
+
+
+class TestRunLayer3Batching:
+    @patch("src.layer3_ai._call_github_models")
+    def test_403_triggers_model_fallback(self, mock_call: MagicMock):
+        error_403 = _make_api_error(403, "Forbidden")
+        mock_call.side_effect = [
+            error_403,
+            json.dumps({
+                "verdict": "pass",
+                "confidence": 0.9,
+                "files": [{"file": "src/new.py", "verdict": "pass", "reason": "OK"}],
+            }),
+        ]
+        result = run_layer3(
+            source_diffs={"src/new.py": "+ new_code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/new.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert result.verdict == Verdict.PASS
+        assert mock_call.call_count == 2
+        assert mock_call.call_args_list[0][0][0] == "openai/gpt-4.1-mini"
+        assert mock_call.call_args_list[1][0][0] == "openai/gpt-4.1-nano"
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_403_no_fallback_for_custom_model(self, mock_call: MagicMock):
+        mock_call.side_effect = _make_api_error(403, "Forbidden")
+        result = run_layer3(
+            source_diffs={"src/new.py": "+ new_code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/new.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-5-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert result.verdict == Verdict.SKIP
+        mock_call.assert_called_once()
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_all_models_exhausted_returns_skip(self, mock_call: MagicMock):
+        mock_call.side_effect = _make_api_error(403, "Forbidden")
+        result = run_layer3(
+            source_diffs={"src/new.py": "+ new_code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/new.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert result.verdict == Verdict.SKIP
+        assert mock_call.call_count == 2
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_batch_count_in_details_single(self, mock_call: MagicMock):
+        mock_call.return_value = json.dumps({
+            "verdict": "pass",
+            "confidence": 0.9,
+            "files": [{"file": "src/a.py", "verdict": "pass", "reason": "OK"}],
+        })
+        result = run_layer3(
+            source_diffs={"src/a.py": "+ code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/a.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert "1 batch" in result.details
+
+    @patch("src.layer3_ai._call_github_models")
+    @patch("src.layer3_ai._batch_files")
+    def test_model_escalation_carries_across_batches(
+        self, mock_batch: MagicMock, mock_call: MagicMock
+    ):
+        mock_batch.return_value = [["src/a.py"], ["src/b.py"]]
+        error_403 = _make_api_error(403, "Forbidden")
+        mock_call.side_effect = [
+            error_403,
+            json.dumps({
+                "verdict": "pass",
+                "confidence": 0.9,
+                "files": [{"file": "src/a.py", "verdict": "pass", "reason": "OK"}],
+            }),
+            json.dumps({
+                "verdict": "pass",
+                "confidence": 0.9,
+                "files": [{"file": "src/b.py", "verdict": "pass", "reason": "OK"}],
+            }),
+        ]
+        result = run_layer3(
+            source_diffs={"src/a.py": "+ code()", "src/b.py": "+ code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/a.py": None, "src/b.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert result.verdict == Verdict.PASS
+        assert mock_call.call_count == 3
+        assert mock_call.call_args_list[0][0][0] == "openai/gpt-4.1-mini"
+        assert mock_call.call_args_list[1][0][0] == "openai/gpt-4.1-nano"
+        assert mock_call.call_args_list[2][0][0] == "openai/gpt-4.1-nano"
+
+    @patch("src.layer3_ai._call_github_models")
+    @patch("src.layer3_ai._batch_files")
+    def test_remaining_batches_skip_when_models_exhausted(
+        self, mock_batch: MagicMock, mock_call: MagicMock
+    ):
+        mock_batch.return_value = [["src/a.py"], ["src/b.py"]]
+        mock_call.side_effect = _make_api_error(403, "Forbidden")
+        result = run_layer3(
+            source_diffs={"src/a.py": "+ code()", "src/b.py": "+ code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/a.py": None, "src/b.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert result.verdict == Verdict.SKIP
+        file_map = {fv.file: fv for fv in result.file_verdicts}
+        assert file_map["src/a.py"].verdict == Verdict.SKIP
+        assert file_map["src/b.py"].verdict == Verdict.SKIP
+        assert "deferred" in file_map["src/b.py"].reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# BUG 1+2: AI response validation
+# ---------------------------------------------------------------------------
+
+
+class TestValidateBatchVerdicts:
+    """_validate_batch_verdicts filters AI output against batch membership."""
+
+    def test_keeps_verdicts_matching_batch(self):
+        verdicts = [
+            FileVerdict(file="src/a.py", verdict=Verdict.PASS, reason="ok", layer="layer3"),
+            FileVerdict(file="src/b.py", verdict=Verdict.FAIL, reason="bad", layer="layer3"),
+        ]
+        kept = _validate_batch_verdicts(verdicts, ["src/a.py", "src/b.py"])
+        assert len(kept) == 2
+
+    def test_rejects_hallucinated_files(self):
+        verdicts = [
+            FileVerdict(file="src/a.py", verdict=Verdict.PASS, reason="ok", layer="layer3"),
+            FileVerdict(file="src/FAKE.py", verdict=Verdict.FAIL, reason="bad", layer="layer3"),
+        ]
+        kept = _validate_batch_verdicts(verdicts, ["src/a.py"])
+        assert len(kept) == 1
+        assert kept[0].file == "src/a.py"
+
+    def test_returns_none_when_batch_files_missing(self):
+        verdicts = [
+            FileVerdict(file="src/a.py", verdict=Verdict.PASS, reason="ok", layer="layer3"),
+        ]
+        result = _validate_batch_verdicts(verdicts, ["src/a.py", "src/b.py"])
+        assert result is None
+
+    def test_empty_verdicts_returns_none(self):
+        result = _validate_batch_verdicts([], ["src/a.py"])
+        assert result is None
+
+    def test_all_hallucinated_returns_none(self):
+        verdicts = [
+            FileVerdict(file="src/FAKE.py", verdict=Verdict.FAIL, reason="bad", layer="layer3"),
+        ]
+        result = _validate_batch_verdicts(verdicts, ["src/a.py"])
+        assert result is None
+
+
+class TestRunLayer3EmptyAiResponse:
+    """BUG 1: Empty AI response must not be treated as success."""
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_empty_response_defers_to_fallback(self, mock_call: MagicMock):
+        """When AI returns empty content, batch files should get SKIP and
+        fall back to L1+L2, not silently disappear."""
+        mock_call.return_value = ""
+        result = run_layer3(
+            source_diffs={"src/new.py": "+ new_code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/new.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        file_map = {fv.file: fv for fv in result.file_verdicts}
+        assert "src/new.py" in file_map
+        assert file_map["src/new.py"].verdict == Verdict.SKIP
+
+
+class TestRunLayer3HallucinatedFiles:
+    """BUG 2: AI hallucinated files must not appear in final results."""
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_hallucinated_file_not_in_results(self, mock_call: MagicMock):
+        mock_call.return_value = json.dumps({
+            "verdict": "fail",
+            "confidence": 0.9,
+            "files": [
+                {"file": "src/a.py", "verdict": "pass", "reason": "ok"},
+                {"file": "src/HALLUCINATED.py", "verdict": "fail", "reason": "fake"},
+            ],
+        })
+        result = run_layer3(
+            source_diffs={"src/a.py": "+ code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/a.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        file_names = {fv.file for fv in result.file_verdicts}
+        assert "src/HALLUCINATED.py" not in file_names
+        assert "src/a.py" in file_names
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_missing_batch_file_treated_as_failure(self, mock_call: MagicMock):
+        """AI omits src/b.py from response — it should get SKIP, not vanish."""
+        mock_call.return_value = json.dumps({
+            "verdict": "pass",
+            "confidence": 0.9,
+            "files": [
+                {"file": "src/a.py", "verdict": "pass", "reason": "ok"},
+            ],
+        })
+        result = run_layer3(
+            source_diffs={"src/a.py": "+ code()", "src/b.py": "+ more()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/a.py": None, "src/b.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        file_map = {fv.file: fv for fv in result.file_verdicts}
+        assert "src/b.py" in file_map
+        assert file_map["src/b.py"].verdict == Verdict.SKIP
+
+
+# ---------------------------------------------------------------------------
+# BUG 3: Graceful degradation on prompt/parse failures
+# ---------------------------------------------------------------------------
+
+
+class TestRunLayer3PromptFileMissing:
+    @patch("src.layer3_ai._PROMPT_PATH")
+    def test_missing_prompt_degrades_to_skip(self, mock_path: MagicMock):
+        mock_path.read_text.side_effect = FileNotFoundError("no such file")
+        result = run_layer3(
+            source_diffs={"src/a.py": "+ code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/a.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        file_map = {fv.file: fv for fv in result.file_verdicts}
+        assert "src/a.py" in file_map
+        assert file_map["src/a.py"].verdict == Verdict.SKIP
+
+
+class TestRunLayer3ParseFailure:
+    @patch("src.layer3_ai._call_github_models")
+    def test_schema_drift_degrades_to_skip(self, mock_call: MagicMock):
+        mock_call.return_value = '{"verdict": "pass"}'
+        result = run_layer3(
+            source_diffs={"src/a.py": "+ code()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/a.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        file_map = {fv.file: fv for fv in result.file_verdicts}
+        assert "src/a.py" in file_map
+        assert file_map["src/a.py"].verdict == Verdict.SKIP

@@ -25,7 +25,7 @@ inputs:
     default: 'true'
   ai-model:
     description: 'GitHub Models model ID for AI analysis.'
-    default: 'openai/gpt-5-mini'
+    default: 'openai/gpt-4.1-mini'
   ai-confidence-threshold:
     description: 'Minimum AI confidence to enforce fail verdict (0.0-1.0). Below this, fail becomes warning.'
     default: '0.7'

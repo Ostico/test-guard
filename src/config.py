@@ -22,7 +22,7 @@ _DEFAULT_EXCLUDE = (
     "build.rs"
 )
 _DEFAULT_COVERAGE_THRESHOLD = 80
-_DEFAULT_AI_MODEL = "openai/gpt-5-mini"
+_DEFAULT_AI_MODEL = "openai/gpt-4.1-mini"
 _DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.7
 _DEFAULT_AI_ENABLED_VALUES = ("true", "1", "yes")
 

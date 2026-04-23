@@ -19,7 +19,7 @@ Layer 2: File Matching ─── advisory hints for Layer 3
 Layer 3: Per-File Analysis
    ├── Gate 1-8: Deterministic shortcuts (coverage + test relevance + triviality)
    │   resolves most files without AI
-   └── AI fallthrough: only ambiguous files sent to GPT-5-mini
+   └── AI fallthrough: only ambiguous files sent to AI
        │
        ▼
    Layer 3 verdict overrides all other layers
@@ -149,7 +149,7 @@ jobs:
 | `test-patterns` | `auto` | Source-to-test mapping. Auto-detects 19 languages. |
 | `exclude-patterns` | _(see below)_ | Comma-separated glob patterns to skip. |
 | `ai-enabled` | `true` | Enable Layer 3 AI analysis. |
-| `ai-model` | `openai/gpt-5-mini` | GitHub Models model ID. |
+| `ai-model` | `openai/gpt-4.1-mini` | GitHub Models model ID. |
 | `ai-confidence-threshold` | `0.7` | AI FAIL verdicts below this confidence become WARNING. |
 
 **Default exclude patterns:**
@@ -161,6 +161,53 @@ migrations/**, docs/**,
 conftest.py, setup.py, manage.py, noxfile.py, fabfile.py,
 build.rs
 ```
+
+---
+
+## GitHub Models Setup
+
+Layer 3 uses the [GitHub Models](https://github.com/marketplace/models) inference API. This works with your existing `GITHUB_TOKEN` — no external API keys needed.
+
+### Requirements
+
+1. **`models: read` permission** in your workflow (see Quick Start above).
+2. **GitHub Models enabled** for your account or organization:
+   - **Personal repos:** Go to [github.com/marketplace/models](https://github.com/marketplace/models) and accept the terms. The free tier is sufficient.
+   - **Organization repos:** An organization owner must enable GitHub Models at the org level. Go to **Organization Settings → Copilot → Policies** and enable model access.
+3. **Free tier limits:** GitHub Models free tier allows ~150 requests/day with up to 8K input tokens per request. Test-Guard's smart batching is designed to stay within these limits.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|:--------|:------|:----|
+| 403 "Model not accessible" | GitHub Models not enabled | Enable at org or personal level (step 2 above) |
+| 413 "Request body too large" | Diff exceeds model token limit | Automatic — smart batching handles this |
+| Intermittent 429 errors | Rate limit exceeded | Reduce PR size or use `ai-enabled: 'false'` for low-priority PRs |
+
+---
+
+## AI Architecture
+
+### Smart Batching
+
+When a PR touches many files or has large diffs, Test-Guard automatically splits work into batches that fit within the model's token limit (~6K user-prompt tokens per batch).
+
+- **Token estimation:** `len(diff_text) / 4` tokens per diff.
+- **Per-file cost:** Source diff + matched test diffs + overhead.
+- **Greedy packing:** Files are packed into the current batch until adding the next file would exceed the budget, then a new batch starts.
+- **Oversized files:** A single file that exceeds the budget gets its own batch — the retry path handles it with tighter diff truncation.
+
+### Model Fallback Chain
+
+When using the default model (`openai/gpt-4.1-mini`), Test-Guard automatically falls back to smaller models if the current model becomes unavailable:
+
+```
+openai/gpt-4.1-mini → openai/gpt-4.1-nano
+```
+
+- **403 (model forbidden):** Escalates to the next model in the chain. If all models are exhausted, remaining files get SKIP verdicts.
+- **413 (request too large):** Retries the same model with tighter diff truncation (3K chars max). If still too large, reports the error for that batch.
+- **Custom model:** When you set `ai-model` to a non-default value, no fallback chain is used — only your specified model is tried.
 
 ---
 

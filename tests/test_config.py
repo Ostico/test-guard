@@ -24,7 +24,7 @@ class TestParseConfig:
         assert cfg.coverage_files == []
         assert cfg.coverage_threshold == 80
         assert cfg.ai_enabled is True
-        assert cfg.ai_model == "openai/gpt-5-mini"
+        assert cfg.ai_model == "openai/gpt-4.1-mini"
         assert cfg.ai_confidence_threshold == 0.7
         assert cfg.github_token == "ghp_fake123"
         assert cfg.repo == "owner/repo"
