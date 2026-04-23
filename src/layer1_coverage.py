@@ -36,6 +36,11 @@ def _compute_diff_coverage(coverage_files: list[str]) -> tuple[float, dict[str, 
             timeout=_DIFF_COVER_TIMEOUT,
         )
         if result.returncode != 0:
+            if result.stderr:
+                print(
+                    f"::warning::diff-cover failed"
+                    f" (exit {result.returncode}): {result.stderr.strip()}"
+                )
             return -1.0, {}
 
         data = json.loads(result.stdout)
@@ -55,7 +60,8 @@ def _compute_diff_coverage(coverage_files: list[str]) -> tuple[float, dict[str, 
         FileNotFoundError,
         AttributeError,
         TypeError,
-    ):
+    ) as exc:
+        print(f"::warning::diff-cover error: {exc}")
         return -1.0, {}
 
 
