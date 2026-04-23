@@ -56,7 +56,7 @@ _DEFAULT_TEST_PATTERNS = {
     "tsx-dir": {"src_pattern": "**/*.tsx", "test_template": "**/__tests__/{name}.tsx"},
     #
     # --- PHP ---
-    "php": {"src_pattern": "**/*.php", "test_template": "tests/{name}Test.php"},
+    "php": {"src_pattern": "**/*.php", "test_template": "**/{name}Test.php"},
     #
     # --- Go ---
     "go": {"src_pattern": "**/*.go", "test_template": "**/{name}_test.go"},
