@@ -125,7 +125,7 @@ class Layer3Result:
 
     @property
     def verdict(self) -> Verdict:
-        if self.execution_status == "ERROR":
+        if self.execution_status == "ERROR" and not self.per_file_verdicts:
             return Verdict.SKIP
 
         verdicts = list(self.per_file_verdicts.values())
@@ -373,6 +373,7 @@ def run_layer3(
 
     execution_status = "OK"
     ai_file_verdicts: list[FileVerdict] = []
+    ai_failed_files: list[str] = []
 
     if files_for_ai:
         try:
@@ -390,8 +391,10 @@ def run_layer3(
                     fv_verdict = Verdict.WARNING
                 per_file_verdicts[fv.file] = fv_verdict
 
-        except Exception:
+        except Exception as exc:
             execution_status = "ERROR"
+            print(f"::warning::Layer 3 AI call failed: {exc}")
+            ai_failed_files = [f for f in files_for_ai if f not in per_file_verdicts]
 
     l3 = Layer3Result(per_file_verdicts, execution_status)
 
@@ -405,8 +408,24 @@ def run_layer3(
             FileVerdict(file=src, verdict=v, reason=reason, layer="layer3")
         )
 
+    for f in ai_failed_files:
+        all_file_verdicts.append(
+            FileVerdict(
+                file=f,
+                verdict=Verdict.SKIP,
+                reason="AI analysis unavailable — deferred to Layer 2",
+                layer="layer3",
+            )
+        )
+
     if execution_status == "ERROR":
-        details = "AI analysis failed — falling back to L1+L2."
+        if per_file_verdicts:
+            details = (
+                "AI analysis failed — shortcuts resolved;"
+                " remaining files deferred to L1+L2."
+            )
+        else:
+            details = "AI analysis failed — falling back to L1+L2."
     elif not files_for_ai:
         details = "All files resolved by deterministic shortcuts."
     else:

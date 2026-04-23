@@ -62,8 +62,14 @@ class TestParseAiResponse:
 
 
 class TestLayer3Result:
-    def test_error_status_returns_skip(self):
+    def test_error_status_with_verdicts_computes_normally(self):
+        """ERROR + non-empty per_file_verdicts → compute from verdicts, not SKIP."""
         result = Layer3Result({"src/a.py": Verdict.PASS}, "ERROR")
+        assert result.verdict == Verdict.PASS
+
+    def test_error_status_no_verdicts_returns_skip(self):
+        """ERROR + empty per_file_verdicts → SKIP (full fallback)."""
+        result = Layer3Result({}, "ERROR")
         assert result.verdict == Verdict.SKIP
 
     def test_no_files_returns_pass(self):
@@ -160,6 +166,31 @@ class TestRunLayer3:
             confidence_threshold=0.7,
         )
         assert result.verdict == Verdict.SKIP
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_ai_failure_with_shortcuts_preserves_shortcut_verdicts(self, mock_call: MagicMock):
+        mock_call.side_effect = Exception("API down")
+        result = run_layer3(
+            source_diffs={
+                "src/trivial.py": "+ # comment",
+                "src/ambiguous.py": "+ complex_code()",
+            },
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/trivial.py": None, "src/ambiguous.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-5-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert result.verdict == Verdict.PASS
+        file_map = {fv.file: fv for fv in result.file_verdicts}
+        assert "src/trivial.py" in file_map
+        assert file_map["src/trivial.py"].verdict == Verdict.SKIP
+        assert "src/ambiguous.py" in file_map
+        assert file_map["src/ambiguous.py"].verdict == Verdict.SKIP
+        assert "deferred" in file_map["src/ambiguous.py"].reason.lower()
 
     def test_empty_source_diffs_returns_pass(self):
         result = run_layer3(
