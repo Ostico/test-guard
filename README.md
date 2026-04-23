@@ -226,6 +226,10 @@ Test-Guard reports results in two places:
 ### Layer 1: ❌ FAIL
 Changed lines: 45% covered (threshold: 80%)
 
+**Below threshold:** `src/billing.py` (25%)
+
+**Missing from coverage report:** `src/new_feature.py`
+
 ### Layer 2: ❌ FAIL (advisory)
 File matching: 1 pass, 1 fail
 
@@ -235,15 +239,15 @@ File matching: 1 pass, 1 fail
 | `src/billing.py` | ❌ fail | No matching test file |
 
 ### Layer 3: ⚠️ WARNING
-Per-file analysis (2 shortcut, 1 AI):
+Evaluated 3 files: 1 via AI (1 batch), 2 via shortcuts.
 
 | File | Verdict | Reason |
 |:-----|:--------|:-------|
 | `src/auth.py` | ✅ pass | shortcut → coverage 92% ≥ 80% |
-| `src/utils.py` | ⏭️ skip | shortcut → trivial (whitespace only) |
+| `src/utils.py` | ⏭️ skip | shortcut → trivial change (whitespace/comments only) |
 | `src/billing.py` | ⚠️ warning | AI: new discount logic partially covered (confidence: 62%) |
 
-**Result: ⚠️ WARNING** (Layer 3 authoritative)
+**Result: ⚠️ WARNING**
 ```
 
 ---
