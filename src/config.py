@@ -133,7 +133,7 @@ class Config:
     event_name: str
 
     # Layer 1 — coverage
-    coverage_file: str | None
+    coverage_files: list[str]
     coverage_threshold: int  # 0-100
 
     # Layer 2 — heuristic
@@ -160,7 +160,8 @@ def parse_config() -> Config:
         pr_number = int(match.group(1))
 
     # Layer 1
-    coverage_file = _env("COVERAGE-FILE")
+    coverage_raw = _env("COVERAGE-FILE") or ""
+    coverage_files = [p.strip() for p in re.split(r"[,\n]", coverage_raw) if p.strip()]
     threshold_raw = _env("COVERAGE-THRESHOLD", str(_DEFAULT_COVERAGE_THRESHOLD))
     try:
         coverage_threshold = int(threshold_raw)
@@ -203,7 +204,7 @@ def parse_config() -> Config:
         repo=repo,
         pr_number=pr_number,
         event_name=event_name,
-        coverage_file=coverage_file,
+        coverage_files=coverage_files,
         coverage_threshold=coverage_threshold,
         test_patterns=test_patterns,
         exclude_patterns=exclude_patterns,

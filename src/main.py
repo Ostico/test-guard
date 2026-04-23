@@ -54,7 +54,7 @@ def run_pipeline(config: Config) -> Report:
     )
 
     # === Layer 1: Coverage Gate ===
-    l1 = run_layer1(config.coverage_file, config.coverage_threshold, changed_files)
+    l1 = run_layer1(config.coverage_files, config.coverage_threshold, changed_files)
     report.layers.append(l1)
     if l1.short_circuit:
         report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)

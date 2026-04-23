@@ -17,7 +17,7 @@ from src.models import LayerResult, Verdict
 _DIFF_COVER_TIMEOUT = 60
 
 
-def _compute_diff_coverage(coverage_file: str) -> tuple[float, dict[str, float]]:
+def _compute_diff_coverage(coverage_files: list[str]) -> tuple[float, dict[str, float]]:
     """Run diff-cover and return (aggregate_pct, per_file_pct).
 
     Returns (-1.0, {}) on any failure.
@@ -26,7 +26,7 @@ def _compute_diff_coverage(coverage_file: str) -> tuple[float, dict[str, float]]
         result = subprocess.run(
             [
                 "diff-cover",
-                coverage_file,
+                *coverage_files,
                 "--json-report",
                 "/dev/stdout",
                 "--quiet",
@@ -60,29 +60,31 @@ def _compute_diff_coverage(coverage_file: str) -> tuple[float, dict[str, float]]
 
 
 def run_layer1(
-    coverage_file: str | None,
+    coverage_files: list[str],
     threshold: int,
     diff_files: list[str],
 ) -> LayerResult:
-    if not coverage_file:
+    if not coverage_files:
         return LayerResult(
             layer="layer1",
             verdict=Verdict.SKIP,
-            details="No coverage file provided — skipping Layer 1.",
+            details="No coverage files provided — skipping Layer 1.",
             file_verdicts=[],
             short_circuit=False,
         )
 
-    if not Path(coverage_file).exists():
+    valid_files = [f for f in coverage_files if Path(f).exists()]
+    if not valid_files:
+        missing = ", ".join(coverage_files)
         return LayerResult(
             layer="layer1",
             verdict=Verdict.SKIP,
-            details=f"Coverage file not found: {coverage_file} — skipping Layer 1.",
+            details=f"No valid coverage files found ({missing}) — skipping Layer 1.",
             file_verdicts=[],
             short_circuit=False,
         )
 
-    total_pct, per_file = _compute_diff_coverage(coverage_file)
+    total_pct, per_file = _compute_diff_coverage(valid_files)
 
     if total_pct < 0:
         return LayerResult(

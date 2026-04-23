@@ -26,7 +26,7 @@ from openai.types.shared_params.response_format_json_schema import JSONSchema
 from src.models import FileVerdict, LayerResult, Verdict
 
 
-class TestRelevance(Enum):
+class Relevance(Enum):
     YES = "yes"
     NO = "no"
     UNKNOWN = "unknown"
@@ -37,22 +37,22 @@ def compute_test_relevance(
     changed_test_files: list[str],
     l2_matched_test: str | None,
     test_diffs: dict[str, str],
-) -> TestRelevance:
+) -> Relevance:
     if not changed_test_files:
-        return TestRelevance.NO
+        return Relevance.NO
 
     source_stem = PurePosixPath(source_file).stem.lower()
 
     for test_file in changed_test_files:
         if l2_matched_test is not None and test_file == l2_matched_test:
-            return TestRelevance.YES
+            return Relevance.YES
         if source_stem in PurePosixPath(test_file).stem.lower():
-            return TestRelevance.YES
+            return Relevance.YES
         diff_text = test_diffs.get(test_file, "")
         if source_stem in diff_text.lower():
-            return TestRelevance.YES
+            return Relevance.YES
 
-    return TestRelevance.UNKNOWN
+    return Relevance.UNKNOWN
 
 
 _IMPORT_RE = re.compile(
@@ -91,7 +91,7 @@ def evaluate_file_shortcut(
     is_deleted: bool,
     coverage_details: dict[str, float] | None,
     coverage_threshold: float,
-    test_relevance: TestRelevance,
+    test_relevance: Relevance,
 ) -> Verdict | None:
     if is_deleted:
         return Verdict.SKIP
@@ -109,10 +109,10 @@ def evaluate_file_shortcut(
     if coverage_ok:
         return Verdict.PASS
 
-    if test_relevance == TestRelevance.NO:
+    if test_relevance == Relevance.NO:
         return Verdict.FAIL
 
-    if has_coverage and test_relevance == TestRelevance.YES:
+    if has_coverage and test_relevance == Relevance.YES:
         return Verdict.FAIL
 
     return None

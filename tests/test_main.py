@@ -17,7 +17,7 @@ def base_config():
         repo="owner/repo",
         pr_number=42,
         event_name="pull_request",
-        coverage_file=None,
+        coverage_files=[],
         coverage_threshold=80,
         test_patterns={
             "python": {"src_pattern": "**/*.py", "test_template": "tests/test_{name}.py"},
@@ -35,7 +35,7 @@ def _ai_disabled_config(base: Config) -> Config:
         repo=base.repo,
         pr_number=base.pr_number,
         event_name=base.event_name,
-        coverage_file=base.coverage_file,
+        coverage_files=base.coverage_files,
         coverage_threshold=base.coverage_threshold,
         test_patterns=base.test_patterns,
         exclude_patterns=base.exclude_patterns,
@@ -351,7 +351,7 @@ class TestMainEntryPoint:
             repo="owner/repo",
             pr_number=pr_number,
             event_name=event_name,
-            coverage_file=None,
+            coverage_files=[],
             coverage_threshold=80,
             test_patterns={
                 "python": {"src_pattern": "**/*.py", "test_template": "tests/test_{name}.py"},

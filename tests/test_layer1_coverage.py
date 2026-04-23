@@ -25,14 +25,14 @@ class TestConstants:
 
 class TestRunLayer1:
     def test_skip_when_no_coverage_file(self):
-        result = run_layer1(coverage_file=None, threshold=80, diff_files=[])
+        result = run_layer1(coverage_files=[], threshold=80, diff_files=[])
         assert result.verdict == Verdict.SKIP
         assert result.short_circuit is False
         assert result.coverage_details is None
 
     def test_skip_when_coverage_file_missing(self, tmp_path):
         fake_path = str(tmp_path / "nonexistent.xml")
-        result = run_layer1(coverage_file=fake_path, threshold=80, diff_files=["src/foo.py"])
+        result = run_layer1(coverage_files=[fake_path], threshold=80, diff_files=["src/foo.py"])
         assert result.verdict == Verdict.SKIP
         assert result.coverage_details is None
 
@@ -42,7 +42,7 @@ class TestRunLayer1:
         cov.write_text("<xml/>")
         mock_cov.return_value = (92.5, {"src/auth.py": 92.5})
         result = run_layer1(
-            coverage_file=str(cov),
+            coverage_files=[str(cov)],
             threshold=80,
             diff_files=["src/auth.py"],
         )
@@ -57,7 +57,7 @@ class TestRunLayer1:
         per_file = {"src/auth.py": 92.5, "src/billing.py": 25.0}
         mock_cov.return_value = (85.0, per_file)
         result = run_layer1(
-            coverage_file=str(cov),
+            coverage_files=[str(cov)],
             threshold=80,
             diff_files=["src/auth.py", "src/billing.py"],
         )
@@ -71,7 +71,7 @@ class TestRunLayer1:
         cov.write_text("<xml/>")
         mock_cov.return_value = (92.5, {"src/auth.py": 92.5})
         result = run_layer1(
-            coverage_file=str(cov),
+            coverage_files=[str(cov)],
             threshold=80,
             diff_files=["src/auth.py", "src/new_feature.py"],
         )
@@ -85,7 +85,7 @@ class TestRunLayer1:
         cov.write_text("<xml/>")
         mock_cov.return_value = (80.0, {"src/auth.py": 80.0})
         result = run_layer1(
-            coverage_file=str(cov),
+            coverage_files=[str(cov)],
             threshold=80,
             diff_files=["src/auth.py"],
         )
@@ -98,7 +98,7 @@ class TestRunLayer1:
         cov.write_text("<xml/>")
         mock_cov.return_value = (-1.0, {})
         result = run_layer1(
-            coverage_file=str(cov),
+            coverage_files=[str(cov)],
             threshold=80,
             diff_files=["src/auth.py"],
         )
@@ -114,7 +114,7 @@ class TestRunLayer1:
         per_file = {"src/a.py": 95.0, "src/b.py": 88.0}
         mock_cov.return_value = (91.5, per_file)
         result = run_layer1(
-            coverage_file=str(cov),
+            coverage_files=[str(cov)],
             threshold=80,
             diff_files=["src/a.py", "src/b.py"],
         )
@@ -126,7 +126,7 @@ class TestRunLayer1:
         cov.write_text("<xml/>")
         mock_cov.return_value = (92.0, {"src/auth.py": 92.0})
         result = run_layer1(
-            coverage_file=str(cov),
+            coverage_files=[str(cov)],
             threshold=80,
             diff_files=["src/auth.py", "tests/test_auth.py", "README.md"],
         )
@@ -143,7 +143,7 @@ class TestComputeDiffCoverage:
             stdout=_SAMPLE_SRC_STATS_JSON,
             stderr="",
         )
-        total, per_file = _compute_diff_coverage("coverage.xml")
+        total, per_file = _compute_diff_coverage(["coverage.xml"])
         assert total == 85.0
         assert per_file == {"src/auth.py": 92.5, "src/billing.py": 25.0}
 
@@ -155,14 +155,14 @@ class TestComputeDiffCoverage:
             stdout="",
             stderr="error",
         )
-        total, per_file = _compute_diff_coverage("coverage.xml")
+        total, per_file = _compute_diff_coverage(["coverage.xml"])
         assert total == -1.0
         assert per_file == {}
 
     @patch("src.layer1_coverage.subprocess.run")
     def test_returns_negative_and_empty_on_timeout(self, mock_run):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="diff-cover", timeout=60)
-        total, per_file = _compute_diff_coverage("coverage.xml")
+        total, per_file = _compute_diff_coverage(["coverage.xml"])
         assert total == -1.0
         assert per_file == {}
 
@@ -174,14 +174,14 @@ class TestComputeDiffCoverage:
             stdout="not-json",
             stderr="",
         )
-        total, per_file = _compute_diff_coverage("coverage.xml")
+        total, per_file = _compute_diff_coverage(["coverage.xml"])
         assert total == -1.0
         assert per_file == {}
 
     @patch("src.layer1_coverage.subprocess.run")
     def test_returns_negative_and_empty_when_not_installed(self, mock_run):
         mock_run.side_effect = FileNotFoundError("diff-cover")
-        total, per_file = _compute_diff_coverage("coverage.xml")
+        total, per_file = _compute_diff_coverage(["coverage.xml"])
         assert total == -1.0
         assert per_file == {}
 
@@ -193,7 +193,7 @@ class TestComputeDiffCoverage:
             stdout='{"total_percent_covered": 50.0}',
             stderr="",
         )
-        total, per_file = _compute_diff_coverage("coverage.xml")
+        total, per_file = _compute_diff_coverage(["coverage.xml"])
         assert total == 50.0
         assert per_file == {}
 
@@ -205,6 +205,63 @@ class TestComputeDiffCoverage:
             stdout='{"total_percent_covered": 0.0, "src_stats": {}}',
             stderr="",
         )
-        total, per_file = _compute_diff_coverage("coverage.xml")
+        total, per_file = _compute_diff_coverage(["coverage.xml"])
         assert total == 0.0
         assert per_file == {}
+
+
+class TestComputeDiffCoverageMultiFile:
+    @patch("src.layer1_coverage.subprocess.run")
+    def test_passes_multiple_files_as_positional_args(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["diff-cover"],
+            returncode=0,
+            stdout='{"total_percent_covered": 80.0, "src_stats": {}}',
+            stderr="",
+        )
+        _compute_diff_coverage(["a.xml", "b.xml"])
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["diff-cover", "a.xml", "b.xml", "--json-report", "/dev/stdout", "--quiet"]
+
+    @patch("src.layer1_coverage.subprocess.run")
+    def test_single_file_list_works(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["diff-cover"],
+            returncode=0,
+            stdout='{"total_percent_covered": 90.0, "src_stats": {}}',
+            stderr="",
+        )
+        total, per_file = _compute_diff_coverage(["coverage.xml"])
+        assert total == 90.0
+        assert per_file == {}
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["diff-cover", "coverage.xml", "--json-report", "/dev/stdout", "--quiet"]
+
+
+class TestRunLayer1MultiFile:
+    def test_skip_when_empty_list(self):
+        result = run_layer1(coverage_files=[], threshold=80, diff_files=[])
+        assert result.verdict == Verdict.SKIP
+        assert result.short_circuit is False
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_filters_missing_files_and_runs_remaining(self, mock_cov, tmp_path):
+        real = tmp_path / "real.xml"
+        real.write_text("<xml/>")
+        mock_cov.return_value = (85.0, {"src/a.py": 85.0})
+        result = run_layer1(
+            coverage_files=[str(real), str(tmp_path / "missing.xml")],
+            threshold=80,
+            diff_files=["src/a.py"],
+        )
+        assert result.verdict == Verdict.PASS
+        mock_cov.assert_called_once_with([str(real)])
+
+    def test_skip_when_all_files_missing(self, tmp_path):
+        result = run_layer1(
+            coverage_files=[str(tmp_path / "nope.xml")],
+            threshold=80,
+            diff_files=["src/a.py"],
+        )
+        assert result.verdict == Verdict.SKIP
+        assert "not found" in result.details.lower() or "no valid" in result.details.lower()

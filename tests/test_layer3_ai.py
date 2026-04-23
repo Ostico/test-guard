@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import src.layer3_ai as layer3_ai
 from src.layer3_ai import (
     Layer3Result,
-    TestRelevance,
+    Relevance,
     _build_ai_prompt,
     _call_github_models,
     _parse_ai_response,
@@ -280,12 +280,12 @@ class TestVerdictSchema:
 
 class TestTestRelevanceEnum:
     def test_values(self):
-        assert TestRelevance.YES.value == "yes"
-        assert TestRelevance.NO.value == "no"
-        assert TestRelevance.UNKNOWN.value == "unknown"
+        assert Relevance.YES.value == "yes"
+        assert Relevance.NO.value == "no"
+        assert Relevance.UNKNOWN.value == "unknown"
 
     def test_membership(self):
-        assert len(TestRelevance) == 3
+        assert len(Relevance) == 3
 
 
 class TestTestRelevanceFunction:
@@ -296,7 +296,7 @@ class TestTestRelevanceFunction:
             l2_matched_test="tests/test_auth.py",
             test_diffs={"tests/test_auth.py": "+ def test_login(): ..."},
         )
-        assert result == TestRelevance.YES
+        assert result == Relevance.YES
 
     def test_yes_when_test_name_contains_source_stem(self):
         result = compute_test_relevance(
@@ -305,7 +305,7 @@ class TestTestRelevanceFunction:
             l2_matched_test=None,
             test_diffs={"tests/test_payment_flow.py": "+ def test_pay(): ..."},
         )
-        assert result == TestRelevance.YES
+        assert result == Relevance.YES
 
     def test_yes_when_test_diff_mentions_source_stem(self):
         result = compute_test_relevance(
@@ -316,7 +316,7 @@ class TestTestRelevanceFunction:
                 "tests/test_helpers.py": "+ from src.validator import Validator\n+ v = Validator()"
             },
         )
-        assert result == TestRelevance.YES
+        assert result == Relevance.YES
 
     def test_no_when_no_test_files_changed(self):
         result = compute_test_relevance(
@@ -325,7 +325,7 @@ class TestTestRelevanceFunction:
             l2_matched_test=None,
             test_diffs={},
         )
-        assert result == TestRelevance.NO
+        assert result == Relevance.NO
 
     def test_unknown_when_tests_changed_but_none_matched(self):
         result = compute_test_relevance(
@@ -334,7 +334,7 @@ class TestTestRelevanceFunction:
             l2_matched_test=None,
             test_diffs={"tests/test_csv.py": "+ def test_csv_export(): ..."},
         )
-        assert result == TestRelevance.UNKNOWN
+        assert result == Relevance.UNKNOWN
 
     def test_yes_stem_match_case_insensitive(self):
         result = compute_test_relevance(
@@ -343,7 +343,7 @@ class TestTestRelevanceFunction:
             l2_matched_test=None,
             test_diffs={"tests/test_userservice.py": "+ ..."},
         )
-        assert result == TestRelevance.YES
+        assert result == Relevance.YES
 
     def test_yes_l2_match_trumps_no_stem_match(self):
         result = compute_test_relevance(
@@ -352,7 +352,7 @@ class TestTestRelevanceFunction:
             l2_matched_test="tests/integration/e2e_login.py",
             test_diffs={"tests/integration/e2e_login.py": "+ ..."},
         )
-        assert result == TestRelevance.YES
+        assert result == Relevance.YES
 
     def test_no_when_changed_test_files_empty_even_with_l2_match_not_changed(self):
         result = compute_test_relevance(
@@ -361,7 +361,7 @@ class TestTestRelevanceFunction:
             l2_matched_test="tests/test_auth.py",
             test_diffs={},
         )
-        assert result == TestRelevance.NO
+        assert result == Relevance.NO
 
 
 class TestIsTrivialDiff:
@@ -436,7 +436,7 @@ class TestEvaluateFileShortcut:
             is_deleted=True,
             coverage_details={"src/old.py": 100.0},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.YES,
+            test_relevance=Relevance.YES,
         )
         assert result == Verdict.SKIP
 
@@ -447,7 +447,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details=None,
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.NO,
+            test_relevance=Relevance.NO,
         )
         assert result == Verdict.SKIP
 
@@ -458,7 +458,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details={"src/user.py": 92.0},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.YES,
+            test_relevance=Relevance.YES,
         )
         assert result == Verdict.PASS
 
@@ -469,7 +469,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details={"src/user.py": 85.0},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.NO,
+            test_relevance=Relevance.NO,
         )
         assert result == Verdict.PASS
 
@@ -480,7 +480,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details={"src/user.py": 80.0},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.UNKNOWN,
+            test_relevance=Relevance.UNKNOWN,
         )
         assert result == Verdict.PASS
 
@@ -491,7 +491,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details=None,
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.NO,
+            test_relevance=Relevance.NO,
         )
         assert result == Verdict.FAIL
 
@@ -502,7 +502,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details={"src/billing.py": 18.0},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.NO,
+            test_relevance=Relevance.NO,
         )
         assert result == Verdict.FAIL
 
@@ -513,7 +513,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details={"src/auth.py": 40.0},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.YES,
+            test_relevance=Relevance.YES,
         )
         assert result == Verdict.FAIL
 
@@ -524,7 +524,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details={"src/auth.py": 40.0},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.UNKNOWN,
+            test_relevance=Relevance.UNKNOWN,
         )
         assert result is None
 
@@ -535,7 +535,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details=None,
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.YES,
+            test_relevance=Relevance.YES,
         )
         assert result is None
 
@@ -546,7 +546,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details=None,
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.UNKNOWN,
+            test_relevance=Relevance.UNKNOWN,
         )
         assert result is None
 
@@ -557,7 +557,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details={"src/other.py": 95.0},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.YES,
+            test_relevance=Relevance.YES,
         )
         assert result is None
 
@@ -568,7 +568,7 @@ class TestEvaluateFileShortcut:
             is_deleted=True,
             coverage_details=None,
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.NO,
+            test_relevance=Relevance.NO,
         )
         assert result == Verdict.SKIP
 
@@ -579,7 +579,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details={"src/style.py": 100.0},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.YES,
+            test_relevance=Relevance.YES,
         )
         assert result == Verdict.SKIP
 
@@ -590,7 +590,7 @@ class TestEvaluateFileShortcut:
             is_deleted=False,
             coverage_details={},
             coverage_threshold=80.0,
-            test_relevance=TestRelevance.UNKNOWN,
+            test_relevance=Relevance.UNKNOWN,
         )
         assert result is None
 

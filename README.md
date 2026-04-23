@@ -144,7 +144,7 @@ jobs:
 
 | Input | Default | Description |
 |:------|:--------|:------------|
-| `coverage-file` | _(none)_ | Path to coverage report (Cobertura, Clover, JaCoCo, or LCOV). Layer 1 skips if omitted. |
+| `coverage-file` | _(none)_ | Path(s) to coverage report(s) — Cobertura, Clover, JaCoCo, or LCOV. Comma-separated or multiline for multiple files. Layer 1 skips if omitted. |
 | `coverage-threshold` | `80` | Minimum diff-coverage % to auto-pass. |
 | `test-patterns` | `auto` | Source-to-test mapping. Auto-detects 19 languages. |
 | `exclude-patterns` | _(see below)_ | Comma-separated glob patterns to skip. |
@@ -273,6 +273,17 @@ Layer 1 uses [diff-cover](https://github.com/Bachmann1234/diff-cover), which aut
     coverage-threshold: '95'
     ai-confidence-threshold: '0.8'
 ```
+
+### Multiple coverage files (e.g. PHP + JS)
+```yaml
+- uses: ostico/test-guard@v1
+  with:
+    coverage-file: |
+      php-coverage.xml
+      js-coverage.xml
+```
+
+Comma-separated also works: `coverage-file: 'php-coverage.xml,js-coverage.xml'`
 
 ---
 

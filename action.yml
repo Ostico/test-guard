@@ -9,7 +9,7 @@ branding:
 
 inputs:
   coverage-file:
-    description: 'Path to coverage report (Cobertura XML, Clover XML, JaCoCo XML, or LCOV). Optional — Layer 1 skips if not provided.'
+    description: 'Path(s) to coverage report(s) — Cobertura XML, Clover XML, JaCoCo XML, or LCOV. Supports comma-separated or multiline (YAML block scalar) for multiple files. Optional — Layer 1 skips if not provided.'
     required: false
   coverage-threshold:
     description: 'Minimum diff-coverage % to auto-pass (0-100).'
