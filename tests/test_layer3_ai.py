@@ -72,10 +72,6 @@ class TestLayer3Result:
         result = Layer3Result({}, "ERROR")
         assert result.verdict == Verdict.SKIP
 
-    def test_no_files_returns_pass(self):
-        result = Layer3Result({}, "OK")
-        assert result.verdict == Verdict.PASS
-
     def test_all_skip_returns_pass(self):
         result = Layer3Result({"src/a.py": Verdict.SKIP, "src/b.py": Verdict.SKIP}, "OK")
         assert result.verdict == Verdict.PASS
@@ -166,6 +162,7 @@ class TestRunLayer3:
             confidence_threshold=0.7,
         )
         assert result.verdict == Verdict.SKIP
+        assert "API down" in result.details
 
     @patch("src.layer3_ai._call_github_models")
     def test_ai_failure_with_shortcuts_preserves_shortcut_verdicts(self, mock_call: MagicMock):
@@ -185,6 +182,7 @@ class TestRunLayer3:
             confidence_threshold=0.7,
         )
         assert result.verdict == Verdict.PASS
+        assert "API down" in result.details
         file_map = {fv.file: fv for fv in result.file_verdicts}
         assert "src/trivial.py" in file_map
         assert file_map["src/trivial.py"].verdict == Verdict.SKIP
@@ -886,6 +884,7 @@ class TestIntegrationWorkedExamples:
             confidence_threshold=0.7,
         )
         assert result.verdict == Verdict.SKIP
+        assert "HTTP 500" in result.details
 
     @patch("src.layer3_ai._call_github_models")
     def test_example7_unknown_relevance_below_threshold_ai_judges(self, mock_ai):

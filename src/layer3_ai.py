@@ -374,6 +374,7 @@ def run_layer3(
     execution_status = "OK"
     ai_file_verdicts: list[FileVerdict] = []
     ai_failed_files: list[str] = []
+    error_message = ""
 
     if files_for_ai:
         try:
@@ -393,6 +394,7 @@ def run_layer3(
 
         except Exception as exc:
             execution_status = "ERROR"
+            error_message = str(exc)
             print(f"::warning::Layer 3 AI call failed: {exc}")
             ai_failed_files = [f for f in files_for_ai if f not in per_file_verdicts]
 
@@ -419,13 +421,14 @@ def run_layer3(
         )
 
     if execution_status == "ERROR":
+        error_suffix = f" ({error_message})" if error_message else ""
         if per_file_verdicts:
             details = (
-                "AI analysis failed — shortcuts resolved;"
+                f"AI analysis failed{error_suffix} — shortcuts resolved;"
                 " remaining files deferred to L1+L2."
             )
         else:
-            details = "AI analysis failed — falling back to L1+L2."
+            details = f"AI analysis failed{error_suffix} — falling back to L1+L2."
     elif not files_for_ai:
         details = "All files resolved by deterministic shortcuts."
     else:
