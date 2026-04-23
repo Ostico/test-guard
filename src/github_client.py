@@ -39,10 +39,13 @@ def format_report(report: Report) -> str:
         "",
     ]
 
+    has_layer3 = any(lr.layer == "layer3" for lr in report.layers)
+
     for lr in report.layers:
         layer_emoji = _VERDICT_EMOJI[lr.verdict]
         layer_name = lr.layer.replace("layer", "Layer ")
-        lines.append(f"### {layer_name}: {layer_emoji} {lr.verdict.value.upper()}")
+        suffix = " (advisory)" if lr.layer == "layer2" and has_layer3 else ""
+        lines.append(f"### {layer_name}: {layer_emoji} {lr.verdict.value.upper()}{suffix}")
         lines.append(lr.details)
         lines.append("")
 

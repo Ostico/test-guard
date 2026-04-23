@@ -76,6 +76,23 @@ class TestFormatReport:
         assert "src/billing.py" in md
         assert "WARNING" in md or "⚠️" in md
 
+    def test_layer2_advisory_when_layer3_present(self, full_report):
+        md = format_report(full_report)
+        assert "(advisory)" in md
+        l2_line = [l for l in md.splitlines() if "Layer 2" in l][0]
+        assert "(advisory)" in l2_line
+
+    def test_layer2_not_advisory_without_layer3(self):
+        report = Report(
+            layers=[
+                LayerResult("layer1", Verdict.SKIP, "No coverage", [], False),
+                LayerResult("layer2", Verdict.FAIL, "1 fail", [], False),
+            ]
+        )
+        md = format_report(report)
+        l2_line = [l for l in md.splitlines() if "Layer 2" in l][0]
+        assert "(advisory)" not in l2_line
+
 
 class TestPostComment:
     @patch("src.github_client.post_json")

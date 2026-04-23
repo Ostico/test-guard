@@ -582,7 +582,21 @@ def run_layer3(
         )
         if verdict is not None:
             per_file_verdicts[source_file] = verdict
-            shortcut_reasons[source_file] = f"shortcut → {verdict.value}"
+            if is_deleted:
+                reason = "shortcut → deleted file"
+            elif is_trivial_diff(diff):
+                reason = "shortcut → trivial change (whitespace/comments only)"
+            elif verdict == Verdict.PASS:
+                cov = coverage_details[source_file] if coverage_details else 0.0
+                reason = f"shortcut → coverage {cov:.0f}% ≥ {coverage_threshold:.0f}%"
+            elif verdict == Verdict.FAIL and relevance == Relevance.NO:
+                reason = "shortcut → no relevant tests in PR and no/low coverage"
+            elif verdict == Verdict.FAIL:
+                cov = coverage_details[source_file] if coverage_details and source_file in coverage_details else 0.0
+                reason = f"shortcut → coverage {cov:.0f}% < {coverage_threshold:.0f}%, relevant tests exist but insufficient"
+            else:
+                reason = f"shortcut → {verdict.value}"
+            shortcut_reasons[source_file] = reason
         else:
             files_for_ai.append(source_file)
 

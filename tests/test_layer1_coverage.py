@@ -70,6 +70,8 @@ class TestRunLayer1:
         assert result.verdict == Verdict.FAIL
         assert result.short_circuit is False
         assert result.coverage_details == per_file
+        assert "src/billing.py" in result.details
+        assert "25" in result.details
 
     @patch("src.layer1_coverage._compute_diff_coverage")
     def test_no_short_circuit_when_file_absent_from_src_stats(self, mock_cov, tmp_path):
@@ -84,6 +86,8 @@ class TestRunLayer1:
         assert result.verdict == Verdict.FAIL
         assert result.short_circuit is False
         assert result.coverage_details == {"src/auth.py": 92.5}
+        assert "src/new_feature.py" in result.details
+        assert "missing" in result.details.lower()
 
     @patch("src.layer1_coverage._compute_diff_coverage")
     def test_pass_exactly_at_threshold(self, mock_cov, tmp_path):
