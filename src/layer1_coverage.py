@@ -9,6 +9,8 @@ Layer 3 for use in the shortcut truth table and AI prompt.
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -16,32 +18,57 @@ from src.models import LayerResult, Verdict
 
 _DIFF_COVER_TIMEOUT = 60
 
+_TRACEBACK_EXCEPTION_RE = re.compile(
+    r"^([A-Za-z_][\w.]*(?:Error|Exception|Warning))\s*:\s*",
+    re.MULTILINE,
+)
 
-def _compute_diff_coverage(coverage_files: list[str]) -> tuple[float, dict[str, float]]:
-    """Run diff-cover and return (aggregate_pct, per_file_pct).
 
-    Returns (-1.0, {}) on any failure.
+def _extract_stderr_message(stderr: str) -> str:
+    matches = list(_TRACEBACK_EXCEPTION_RE.finditer(stderr))
+    if matches:
+        return stderr[matches[-1].start():].strip()
+    lines = [l.strip() for l in stderr.strip().splitlines() if l.strip()]
+    return lines[-1] if lines else stderr.strip()
+
+
+def _compute_diff_coverage(
+    coverage_files: list[str],
+) -> tuple[float, dict[str, float], str]:
+    """Run diff-cover and return (aggregate_pct, per_file_pct, error_reason).
+
+    Returns (-1.0, {}, reason) on any failure.
     """
     try:
+        cmd = [
+            "diff-cover",
+            *coverage_files,
+            "--json-report",
+            "/dev/stdout",
+            "--quiet",
+        ]
+        base_ref = os.environ.get("GITHUB_BASE_REF", "").strip()
+        if base_ref:
+            cmd.append(f"--compare-branch=origin/{base_ref}")
         result = subprocess.run(
-            [
-                "diff-cover",
-                *coverage_files,
-                "--json-report",
-                "/dev/stdout",
-                "--quiet",
-            ],
+            cmd,
             capture_output=True,
             text=True,
             timeout=_DIFF_COVER_TIMEOUT,
         )
         if result.returncode != 0:
-            if result.stderr:
+            raw_stderr = result.stderr.strip() if result.stderr else ""
+            if raw_stderr:
                 print(
                     f"::warning::diff-cover failed"
-                    f" (exit {result.returncode}): {result.stderr.strip()}"
+                    f" (exit {result.returncode}): {raw_stderr}"
                 )
-            return -1.0, {}
+            reason = (
+                _extract_stderr_message(raw_stderr)
+                if raw_stderr
+                else f"exit code {result.returncode}"
+            )
+            return -1.0, {}, reason
 
         data = json.loads(result.stdout)
         total = float(data.get("total_percent_covered", -1.0))
@@ -53,7 +80,7 @@ def _compute_diff_coverage(coverage_files: list[str]) -> tuple[float, dict[str, 
             if isinstance(pct, (int, float)) and isinstance(filepath_key, str):
                 per_file[filepath_key] = float(pct)
 
-        return total, per_file
+        return total, per_file, ""
     except (
         subprocess.TimeoutExpired,
         json.JSONDecodeError,
@@ -62,7 +89,7 @@ def _compute_diff_coverage(coverage_files: list[str]) -> tuple[float, dict[str, 
         TypeError,
     ) as exc:
         print(f"::warning::diff-cover error: {exc}")
-        return -1.0, {}
+        return -1.0, {}, str(exc)
 
 
 def run_layer1(
@@ -90,13 +117,17 @@ def run_layer1(
             short_circuit=False,
         )
 
-    total_pct, per_file = _compute_diff_coverage(valid_files)
+    total_pct, per_file, error_reason = _compute_diff_coverage(valid_files)
 
     if total_pct < 0:
+        detail = "diff-cover failed to compute coverage"
+        if error_reason:
+            detail += f": {error_reason}"
+        detail += " — skipping Layer 1."
         return LayerResult(
             layer="layer1",
             verdict=Verdict.SKIP,
-            details="diff-cover failed to compute coverage — skipping Layer 1.",
+            details=detail,
             file_verdicts=[],
             short_circuit=False,
         )
