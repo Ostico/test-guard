@@ -14,7 +14,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from src.models import LayerResult, Verdict
+from src.models import FileVerdict, LayerResult, Verdict
 
 _DIFF_COVER_TIMEOUT = 60
 
@@ -151,29 +151,39 @@ def run_layer1(
     all_above = all(per_file.get(f, 0.0) >= threshold for f in source_files)
     passed = bool(source_files) and all_above and not absent_files
 
-    details = f"Changed lines: {total_pct}% covered (threshold: {threshold}%)"
-    if not passed:
-        below = [
-            f"`{f}` ({per_file[f]:.0f}%)"
-            for f in source_files
-            if per_file[f] < threshold
-        ]
-        absent_formatted = [f"`{f}`" for f in absent_files]
-        lines: list[str] = []
-        if below:
-            lines.append(f"**Below threshold:** {', '.join(below)}")
-        if absent_formatted:
-            lines.append(
-                f"**Missing from coverage report:** {', '.join(absent_formatted)}"
-            )
-        if lines:
-            details += "\n\n" + "\n\n".join(lines)
+    # Build per-file verdicts so format_report() renders a coverage table
+    # consistent with L2/L3. Each source file gets a row; non-source files
+    # (tests, docs) are excluded since they aren't coverage targets.
+    file_verdicts: list[FileVerdict] = []
+    for f in source_files:
+        pct = per_file[f]
+        if pct >= threshold:
+            file_verdicts.append(FileVerdict(
+                file=f,
+                verdict=Verdict.PASS,
+                reason=f"{pct:.0f}% diff coverage ≥ {threshold}% threshold",
+                layer="layer1",
+            ))
+        else:
+            file_verdicts.append(FileVerdict(
+                file=f,
+                verdict=Verdict.FAIL,
+                reason=f"{pct:.0f}% diff coverage < {threshold}% threshold",
+                layer="layer1",
+            ))
+    for f in absent_files:
+        file_verdicts.append(FileVerdict(
+            file=f,
+            verdict=Verdict.FAIL,
+            reason="not in coverage report",
+            layer="layer1",
+        ))
 
     return LayerResult(
         layer="layer1",
         verdict=Verdict.PASS if passed else Verdict.FAIL,
-        details=details,
-        file_verdicts=[],
+        details=f"Changed lines: {total_pct}% covered (threshold: {threshold}%)",
+        file_verdicts=file_verdicts,
         short_circuit=passed,
         coverage_details=per_file,
     )

@@ -226,9 +226,11 @@ Test-Guard reports results in two places:
 ### Layer 1: ❌ FAIL
 Changed lines: 45% covered (threshold: 80%)
 
-**Below threshold:** `src/billing.py` (25%)
-
-**Missing from coverage report:** `src/new_feature.py`
+| File | Verdict | Reason |
+|---|---|---|
+| `src/auth.py` | ✅ pass | 92% diff coverage ≥ 80% threshold |
+| `src/billing.py` | ❌ fail | 25% diff coverage < 80% threshold |
+| `src/new_feature.py` | ❌ fail | not in coverage report |
 
 ### Layer 2: ❌ FAIL (advisory)
 File matching: 1 pass, 1 fail
