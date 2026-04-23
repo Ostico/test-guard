@@ -145,17 +145,20 @@ def run_layer1(
     details = f"Changed lines: {total_pct}% covered (threshold: {threshold}%)"
     if not passed:
         below = [
-            f"{f} ({per_file[f]:.0f}%)"
+            f"`{f}` ({per_file[f]:.0f}%)"
             for f in source_files
             if per_file[f] < threshold
         ]
-        reasons: list[str] = []
+        absent_formatted = [f"`{f}`" for f in absent_files]
+        lines: list[str] = []
         if below:
-            reasons.append(f"below threshold: {', '.join(below)}")
-        if absent_files:
-            reasons.append(f"missing from coverage report: {', '.join(absent_files)}")
-        if reasons:
-            details += ". Per-file: " + "; ".join(reasons)
+            lines.append(f"**Below threshold:** {', '.join(below)}")
+        if absent_formatted:
+            lines.append(
+                f"**Missing from coverage report:** {', '.join(absent_formatted)}"
+            )
+        if lines:
+            details += "\n\n" + "\n\n".join(lines)
 
     return LayerResult(
         layer="layer1",
