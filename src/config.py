@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import overload
 
 # GitHub Actions passes inputs as INPUT_<NAME> env vars (uppercased, hyphens kept).
+# _DEFAULT_EXCLUDE groups patterns by category to clarify why each is excluded.
 _DEFAULT_EXCLUDE = (
     # Data / markup / generic config (no source language match)
     "*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,*.sql,"
@@ -111,11 +112,34 @@ def _env(name: str, default: str) -> str: ...
 @overload
 def _env(name: str, default: None = None) -> str | None: ...
 def _env(name: str, default: str | None = None) -> str | None:
-    """Read a GitHub Actions input or regular env var."""
+    """Read a GitHub Actions input or regular env var.
+    
+    GitHub Actions passes workflow inputs as INPUT_<NAME> env vars (uppercased).
+    This function checks INPUT_<NAME> first (GitHub Actions convention), then falls
+    back to plain <NAME> (for local testing), then to the provided default.
+    
+    Args:
+        name: Variable name (e.g., "COVERAGE-FILE" → checks INPUT_COVERAGE_FILE first).
+        default: Default value if not found in environment.
+    
+    Returns:
+        The env var value, or default if not found.
+    """
     return os.environ.get(f"INPUT_{name.upper()}", os.environ.get(name.upper(), default))
 
 
 def _env_required(name: str) -> str:
+    """Read a required env var; raise ValueError if not set.
+    
+    Args:
+        name: Environment variable name (plain, not INPUT_-prefixed).
+    
+    Returns:
+        The env var value.
+    
+    Raises:
+        ValueError: If the variable is not set.
+    """
     val = os.environ.get(name)
     if not val:
         raise ValueError(f"{name} is required but not set.")
@@ -124,7 +148,21 @@ def _env_required(name: str) -> str:
 
 @dataclass(frozen=True)
 class Config:
-    """Parsed and validated configuration."""
+    """Parsed and validated configuration from GitHub Actions inputs.
+    
+    Attributes:
+        github_token: GitHub API token for PR comments and status checks.
+        repo: Repository in "owner/repo" format.
+        pr_number: PR number extracted from GITHUB_REF, or None if not a PR.
+        event_name: GitHub event name (e.g., "pull_request").
+        coverage_files: Paths to coverage reports (Cobertura/Clover/JaCoCo/LCOV).
+        coverage_threshold: Minimum diff-coverage % to auto-pass (0-100).
+        test_patterns: Language-specific source-to-test file mappings.
+        exclude_patterns: Glob patterns to skip (config files, docs, etc.).
+        ai_enabled: Whether Layer 3 AI analysis is enabled.
+        ai_model: GitHub Models model ID (e.g., "openai/gpt-4.1-mini").
+        ai_confidence_threshold: AI FAIL verdicts below this become WARNING (0.0-1.0).
+    """
 
     # GitHub context
     github_token: str
@@ -147,7 +185,18 @@ class Config:
 
 
 def parse_config() -> Config:
-    """Parse configuration from environment variables."""
+    """Parse and validate configuration from GitHub Actions environment variables.
+    
+    Reads GitHub context (GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_REF) and
+    workflow inputs (INPUT_COVERAGE_FILE, INPUT_AI_ENABLED, etc.), validates
+    ranges and types, and returns a Config object.
+    
+    Returns:
+        Config: Validated configuration object.
+    
+    Raises:
+        ValueError: If required vars are missing or values are out of range.
+    """
     github_token = _env_required("GITHUB_TOKEN")
     repo = _env_required("GITHUB_REPOSITORY")
     event_name = os.environ.get("GITHUB_EVENT_NAME", "unknown")
@@ -159,7 +208,7 @@ def parse_config() -> Config:
     if match:
         pr_number = int(match.group(1))
 
-    # Layer 1
+    # Layer 1: Parse coverage file paths (comma or newline separated).
     coverage_raw = _env("COVERAGE-FILE") or ""
     coverage_files = [p.strip() for p in re.split(r"[,\n]", coverage_raw) if p.strip()]
     threshold_raw = _env("COVERAGE-THRESHOLD", str(_DEFAULT_COVERAGE_THRESHOLD))
@@ -170,19 +219,20 @@ def parse_config() -> Config:
     if not (0 <= coverage_threshold <= 100):
         raise ValueError(f"coverage-threshold must be 0-100, got: {coverage_threshold}")
 
-    # Layer 2
+    # Layer 2: Parse exclude patterns and test patterns.
     exclude_raw = _env("EXCLUDE-PATTERNS", _DEFAULT_EXCLUDE)
     exclude_patterns = [p.strip() for p in exclude_raw.split(",") if p.strip()]
 
     test_patterns_raw = _env("TEST-PATTERNS", "auto")
     if test_patterns_raw == "auto":
+        # "auto" uses the built-in 19-language pattern set.
         test_patterns = _DEFAULT_TEST_PATTERNS
     else:
         raise ValueError(
             "Custom test patterns not yet supported. Use 'auto' or omit the TEST-PATTERNS input."
         )
 
-    # Layer 3
+    # Layer 3: Parse AI configuration.
     ai_enabled = _env("AI-ENABLED", "true").lower() in _DEFAULT_AI_ENABLED_VALUES
     ai_model = _env("AI-MODEL", _DEFAULT_AI_MODEL)
     confidence_raw = _env(

@@ -15,7 +15,13 @@ DEFAULT_PER_PAGE = 100
 
 
 def create_session(token: str) -> requests.Session:
-    """Create a configured requests session for GitHub API calls."""
+    """Create a configured requests session for GitHub API calls.
+    
+    Configures exponential backoff retry strategy for transient GitHub API errors:
+    - 429 (rate limit): backoff_factor=1 gives 1s, 2s, 4s delays
+    - 5xx errors: transient server issues that may resolve on retry
+    Retries only idempotent methods (GET, POST) to avoid duplicate side effects.
+    """
     session = requests.Session()
     session.headers.update(
         {
@@ -24,6 +30,7 @@ def create_session(token: str) -> requests.Session:
             "X-GitHub-Api-Version": GITHUB_API_VERSION,
         }
     )
+    # Exponential backoff: 1s, 2s, 4s for transient errors (429, 5xx)
     retry = Retry(
         total=3,
         backoff_factor=1,
@@ -69,6 +76,8 @@ def get_paginated(
             all_items.extend(cast(list[Any], payload))
         next_link = response.links.get("next", {}).get("url")
         next_url = next_link if isinstance(next_link, str) else None
+        # After first page, set next_params=None because Link URLs already include query params.
+        # Passing params again would duplicate them (e.g., per_page=100&per_page=100).
         next_params = None
 
     return all_items
@@ -79,7 +88,12 @@ def post_json(
     url: str,
     body: dict[str, Any],
 ) -> requests.Response:
-    """POST JSON body and return raw response without raising."""
+    """POST JSON body and return raw response without raising.
+    
+    Intentionally does not call raise_for_status(). Callers are responsible for
+    checking response.ok and handling errors. This allows callers to implement
+    custom error handling (e.g., logging, retries, or graceful degradation).
+    """
     return session.post(url, json=body, timeout=DEFAULT_TIMEOUT)
 
 
@@ -88,7 +102,12 @@ def get_text(
     url: str,
     accept: str = "application/vnd.github.raw+json",
 ) -> str | None:
-    """GET text content with an Accept override; best-effort on errors."""
+    """GET text content with an Accept override; best-effort on errors.
+    
+    Overrides the session's default Accept header to request raw file content
+    instead of JSON. Returns None on any error (404, 403, etc.) rather than raising,
+    allowing callers to handle missing or inaccessible files gracefully.
+    """
     response = session.get(url, headers={"Accept": accept}, timeout=DEFAULT_TIMEOUT)
     if response.ok:
         return response.text

@@ -16,6 +16,8 @@ _VERDICT_EMOJI = {
     Verdict.SKIP: "⏭️",
 }
 
+# Maps Verdict enum to GitHub check run conclusion values.
+# WARNING → "neutral" is intentional: non-blocking in status checks.
 _VERDICT_CONCLUSION = {
     Verdict.PASS: "success",
     Verdict.FAIL: "failure",
@@ -23,6 +25,9 @@ _VERDICT_CONCLUSION = {
     Verdict.SKIP: "skipped",
 }
 
+# Regex patterns to detect and redact GitHub tokens from error messages.
+# Covers personal access tokens (ghp_), OAuth tokens (gho_), fine-grained PATs (github_pat_),
+# and Bearer tokens. Used to prevent accidental token leakage in logs.
 _TOKEN_PATTERNS = (
     r"ghp_\w+",
     r"gho_\w+",
@@ -44,6 +49,8 @@ def format_report(report: Report) -> str:
     for lr in report.layers:
         layer_emoji = _VERDICT_EMOJI[lr.verdict]
         layer_name = lr.layer.replace("layer", "Layer ")
+        # Add "(advisory)" suffix to Layer 2 only when Layer 3 is present.
+        # This signals that Layer 2's verdict is informational, not authoritative.
         suffix = " (advisory)" if lr.layer == "layer2" and has_layer3 else ""
         lines.append(f"### {layer_name}: {layer_emoji} {lr.verdict.value.upper()}{suffix}")
         lines.append(lr.details)
@@ -75,7 +82,13 @@ def post_comment(
     pr_number: int,
     body: str,
 ) -> None:
-    """Post or update a comment on a PR."""
+    """Post or update a comment on a PR.
+    
+    Uses the GitHub API issues endpoint (not pull_requests) because GitHub treats
+    PR comments as issue comments internally. Logs a warning on failure but does
+    not raise, allowing the pipeline to continue even if the comment fails.
+    """
+    # GitHub API uses issue numbers for PR comments (PRs are a type of issue)
     url = f"{GITHUB_API_URL}/repos/{repo}/issues/{pr_number}/comments"
     resp = post_json(session, url, {"body": body})
     if not resp.ok:
@@ -96,7 +109,11 @@ def post_check_run(
     title: str,
     summary: str,
 ) -> None:
-    """Create a completed check run via the Checks API."""
+    """Create a completed check run via the Checks API.
+    
+    Logs a warning on failure but does not raise, allowing the pipeline to
+    continue even if the check run creation fails.
+    """
     url = f"{GITHUB_API_URL}/repos/{repo}/check-runs"
     resp = post_json(
         session,
@@ -126,7 +143,11 @@ def report_to_github(
     pr_number: int | None,
     sha: str,
 ) -> None:
-    """Post a check run and optionally a PR comment."""
+    """Post a check run and optionally a PR comment.
+    
+    Catches all exceptions to ensure reporting failures never crash the pipeline.
+    Logs warnings for any errors but allows the action to complete successfully.
+    """
     try:
         session = create_session(token)
 
@@ -145,4 +166,7 @@ def report_to_github(
         if pr_number is not None:
             post_comment(session, repo, pr_number, summary)
     except Exception as exc:
+        # Catch all exceptions to prevent reporting failures from crashing the pipeline.
+        # GitHub Actions will still see the action as successful (exit 0), but the warning
+        # will be visible in the logs for debugging.
         print(f"::warning::GitHub reporting failed: {_redact_response_text(str(exc), max_len=500)}")

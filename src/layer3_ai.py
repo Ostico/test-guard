@@ -4,6 +4,12 @@ Evaluates each source file through an 8-gate shortcut truth table using
 coverage data from L1 and test-match data from L2. Files that cannot be
 resolved deterministically fall through to the GitHub Models AI for a
 structured JSON verdict with confidence-based downgrade.
+
+Flow:
+  1. Shortcut phase: Gates 1-8 resolve most files without AI.
+  2. AI phase: Remaining files are batched and sent to the model.
+  3. Result assembly: Shortcut + AI verdicts merged; confidence-based
+     downgrade converts low-confidence FAIL → WARNING.
 """
 
 from __future__ import annotations
@@ -27,6 +33,13 @@ from src.models import FileVerdict, LayerResult, Verdict
 
 
 class Relevance(Enum):
+    """Tri-state test relevance for a source file.
+
+    YES: a changed test file is demonstrably linked to this source file.
+    NO: no test files were changed in this PR at all.
+    UNKNOWN: test files changed but none could be linked to this source file.
+    """
+
     YES = "yes"
     NO = "no"
     UNKNOWN = "unknown"
@@ -38,20 +51,45 @@ def compute_test_relevance(
     l2_matched_test: str | None,
     test_diffs: dict[str, str],
 ) -> Relevance:
+    """Determine whether any changed test file is relevant to this source file.
+
+    Uses three detection strategies in order of confidence:
+      1. L2 exact match: Layer 2 already identified a paired test file.
+      2. Filename stem match: test file name contains the source file's stem.
+      3. Diff content match: source file stem appears in the test diff text.
+
+    Returns UNKNOWN (not NO) when test files exist but none match — the
+    distinction matters for Gate 6/8: UNKNOWN sends the file to AI, while
+    NO triggers an immediate FAIL (no tests at all in the PR).
+
+    Args:
+        source_file: Path of the source file being evaluated.
+        changed_test_files: All test files modified in this PR.
+        l2_matched_test: The test file L2 paired with this source, or None.
+        test_diffs: Raw diff text keyed by test file path.
+
+    Returns:
+        Relevance.YES if a link is found, NO if no tests changed, UNKNOWN otherwise.
+    """
     if not changed_test_files:
+        # No test files touched in this PR — relevance is definitively NO.
         return Relevance.NO
 
     source_stem = PurePosixPath(source_file).stem.lower()
 
     for test_file in changed_test_files:
         if l2_matched_test is not None and test_file == l2_matched_test:
+            # Strategy 1: L2 already did the hard work of matching.
             return Relevance.YES
         if source_stem in PurePosixPath(test_file).stem.lower():
+            # Strategy 2: e.g. "billing" in "test_billing.py".
             return Relevance.YES
         diff_text = test_diffs.get(test_file, "")
         if source_stem in diff_text.lower():
+            # Strategy 3: source name referenced inside the test diff body.
             return Relevance.YES
 
+    # Tests changed but none linked — ambiguous, not absent.
     return Relevance.UNKNOWN
 
 
@@ -71,6 +109,15 @@ _COMMENT_PREFIXES = ("//", "/*", "*", "--", "#")
 
 
 def is_trivial_diff(diff: str) -> bool:
+    """Return True if the diff contains only whitespace or comment changes.
+
+    Import changes are treated as non-trivial even though they look like
+    single-line additions — they alter module dependencies and can introduce
+    side effects that warrant test coverage.
+
+    A diff is trivial only when every changed line (+ or -) is either blank,
+    a comment, or pure whitespace after stripping the diff prefix.
+    """
     for line in diff.splitlines():
         if not (line.startswith("+") or line.startswith("-")):
             continue
@@ -78,6 +125,7 @@ def is_trivial_diff(diff: str) -> bool:
         if not content:
             continue
         if _IMPORT_RE.search(content):
+            # Import changes affect module dependencies — not trivial.
             return False
         if content.startswith(_COMMENT_PREFIXES):
             continue
@@ -93,9 +141,27 @@ def evaluate_file_shortcut(
     coverage_threshold: float,
     test_relevance: Relevance,
 ) -> Verdict | None:
+    """Apply the 8-gate deterministic truth table to a single source file.
+
+    Gates are evaluated in order; the first match returns a Verdict.
+    Returns None when no gate fires — the file must go to the AI.
+
+    Args:
+        source_file: Path of the source file.
+        diff: Raw unified diff for this file.
+        is_deleted: True if the file was removed in this PR.
+        coverage_details: Per-file coverage percentages from L1, or None.
+        coverage_threshold: Minimum coverage % to auto-pass.
+        test_relevance: Tri-state relevance computed by compute_test_relevance().
+
+    Returns:
+        A Verdict if a shortcut applies, or None to fall through to AI.
+    """
+    # Gate 1: Deleted files have no remaining code to test.
     if is_deleted:
         return Verdict.SKIP
 
+    # Gate 2: Whitespace/comment-only diffs don't need tests.
     if is_trivial_diff(diff):
         return Verdict.SKIP
 
@@ -106,22 +172,35 @@ def evaluate_file_shortcut(
         and coverage_details[source_file] >= coverage_threshold
     )
 
+    # Gate 3: Coverage meets threshold — existing tests already cover the changes.
     if coverage_ok:
         return Verdict.PASS
 
+    # Gate 4: No tests changed in this PR and coverage is absent/low — clear FAIL.
     if test_relevance == Relevance.NO:
         return Verdict.FAIL
 
+    # Gate 5: Coverage data exists, relevant tests exist, but coverage is below
+    # threshold — tests are present but insufficient.
     if has_coverage and test_relevance == Relevance.YES:
         return Verdict.FAIL
 
+    # Gates 6-8: Ambiguous cases (UNKNOWN relevance, or no coverage data with
+    # YES relevance) — fall through to AI for judgment.
     return None
 
 
 @dataclass
 class Layer3Result:
+    """Intermediate result container used internally by run_layer3().
+
+    Holds per-file verdicts and an execution status string so the verdict
+    property can distinguish between "no files evaluated" (PASS) and
+    "AI failed with no fallback" (SKIP).
+    """
+
     per_file_verdicts: dict[str, Verdict]
-    execution_status: str
+    execution_status: str  # "OK" or "ERROR"
 
     @property
     def verdict(self) -> Verdict:
@@ -152,18 +231,30 @@ def _build_ai_prompt(
     matched_tests: dict[str, str | None],
     max_diff_chars: int = 10_000,
 ) -> str:
+    """Build the structured Markdown user prompt for the AI batch.
+
+    The prompt has three sections:
+      1. Coverage Summary — per-file coverage percentages.
+      2. Source File Changes — diffs for files needing AI review.
+      3. Test File Changes — relevant test diffs, each annotated as either
+         "matched to <source>" or "candidate" (unmatched to any source).
+
+    The matched/candidate annotation tells the AI which test files are
+    definitively linked to a source file vs. which are circumstantial.
+    """
     if not files_for_ai:
         return ""
 
+    # Build a reverse map: test file → list of source files it is matched to.
+    # Used to annotate each test diff in the prompt so the AI knows which
+    # source files a given test is authoritative for.
     matched_test_to_sources: dict[str, list[str]] = {}
     for src, test in matched_tests.items():
         if test is not None:
             matched_test_to_sources.setdefault(test, []).append(src)
 
-    parts: list[str] = []
+    parts: list[str] = ["## Coverage Summary", "Per-file changed-line coverage:"]
 
-    parts.append("## Coverage Summary")
-    parts.append("Per-file changed-line coverage:")
     for src in files_for_ai:
         if coverage_details is not None and src in coverage_details:
             pct = coverage_details[src]
@@ -212,6 +303,9 @@ class _AiResponse(TypedDict):
 
 
 _VERDICT_SCHEMA: dict[str, object] = {
+    # strict mode + additionalProperties: False forces the model to return
+    # exactly the fields we expect — no extra keys, no missing keys.
+    # This prevents schema drift from silently corrupting _parse_ai_response().
     "type": "object",
     "required": ["verdict", "confidence", "files"],
     "additionalProperties": False,
@@ -242,12 +336,22 @@ _VERDICT_SCHEMA: dict[str, object] = {
 
 
 _INJECTION_LINE_RE = re.compile(
+    # Matches common prompt-injection patterns that could appear in diff lines.
+    # Diffs include arbitrary user-authored code, so we must redact lines that
+    # look like system instructions before embedding them in the AI prompt.
     r"^(?:[+\-\s]*)?(?:SYSTEM:|INSTRUCTION:|IGNORE PREVIOUS|You are\b)",
     re.IGNORECASE,
 )
 
 
 def _sanitize_diff(diff: str, max_chars: int = 10_000) -> str:
+    """Truncate a diff and redact prompt-injection attempts.
+
+    Diffs contain arbitrary user code that could include lines crafted to
+    hijack the AI's instructions (e.g. "SYSTEM: ignore previous instructions").
+    Matching lines are replaced with "[REDACTED]" before the diff is embedded
+    in the prompt.
+    """
     sanitized_lines = [
         "[REDACTED]" if _INJECTION_LINE_RE.match(line) else line
         for line in diff.splitlines()
@@ -283,7 +387,12 @@ _RETRY_MAX_DIFF_CHARS = 3000      # tighter truncation on 413 retry
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate: ~4 chars per token, minimum 1."""
+    """Rough token estimate: ~4 chars per token, minimum 1.
+
+    The 4-char heuristic is a well-known approximation for English/code text
+    with GPT-family tokenizers. It intentionally underestimates to leave
+    headroom; the _SAFETY_FACTOR on the budget absorbs the error.
+    """
     return len(text) // _CHARS_PER_TOKEN + 1
 
 
@@ -297,6 +406,10 @@ def _estimate_file_cost(
     """Estimate token cost of including one source file in a batch.
 
     Accounts for: coverage summary line, source diff, matched test diff.
+
+    Candidate test diffs (not matched to any source) are NOT included here
+    because they appear in every batch regardless — their cost is accounted
+    for once in _batch_files() as base_overhead.
     """
     cost = _FILE_ENTRY_OVERHEAD_TOKENS
     diff = source_diffs.get(src, "")
@@ -317,6 +430,13 @@ def _filter_test_diffs_for_batch(
 ) -> dict[str, str]:
     """Filter test diffs to those relevant to a batch.
 
+    Three categories of test files:
+      - Batch-matched: paired with a source file in this batch → included.
+      - Candidate: not matched to any source file at all → included in every
+        batch because the AI needs them to judge ambiguous files.
+      - Out-of-batch: matched to a source file NOT in this batch → excluded
+        to avoid confusing the AI with irrelevant test context.
+
     Includes:
       - Test files matched to source files *in this batch*.
       - Candidate test files (not matched to any source file at all).
@@ -328,10 +448,12 @@ def _filter_test_diffs_for_batch(
         matched = matched_tests.get(src)
         if matched and matched in test_diffs:
             relevant.add(matched)
+    # Collect all test files that are matched to any source (across all batches).
     batch_matched = {t for src in batch_files
                      for t in [matched_tests.get(src)] if t is not None}
     for test_file in test_diffs:
         if test_file not in batch_matched:
+            # Not matched to any source in this batch — treat as candidate.
             relevant.add(test_file)
     return {t: test_diffs[t] for t in sorted(relevant)}
 
@@ -349,11 +471,17 @@ def _batch_files(
     until the next file would exceed the budget, then a new batch starts.
     A single file that exceeds the budget gets its own batch — the 413 retry
     path will handle it with tighter truncation.
+
+    base_overhead accounts for candidate test diffs (unmatched to any source)
+    that appear in every batch, so they are charged once per batch rather than
+    per file.  Greedy packing is used because optimal bin-packing is NP-hard
+    and the number of files per PR is small in practice.
     """
     if not files_for_ai:
         return []
 
-    # Candidate tests (not matched to any source) go in every batch.
+    # Candidate tests go in every batch — charge their token cost as a fixed
+    # overhead so it doesn't get double-counted in per-file estimates.
     all_matched = {t for t in matched_tests.values() if t is not None}
     candidate_tokens = sum(
         _estimate_tokens(_sanitize_diff(diff))
@@ -554,6 +682,20 @@ def run_layer3(
     token: str,
     confidence_threshold: float,
 ) -> LayerResult:
+    """Run the full Layer 3 evaluation pipeline.
+
+    Three phases:
+      1. Shortcut phase: each source file is evaluated against Gates 1-8.
+         Files resolved here never reach the AI.
+      2. AI phase: remaining files are batched and sent to the model.
+         current_model_idx persists across batches so a 403 on batch N
+         advances the model for all subsequent batches (not just that one).
+         ai_failed_files collects files whose batch failed; they receive
+         SKIP verdicts and fall back to L1+L2.
+      3. Result assembly: shortcut verdicts and AI verdicts are merged.
+         Low-confidence FAIL verdicts are downgraded to WARNING.
+         The details message varies by outcome (all shortcuts / mixed / error).
+    """
     if not source_diffs:
         return LayerResult(
             layer="layer3",
@@ -623,10 +765,13 @@ def run_layer3(
             )
             batch_count = len(batches)
 
+            # Persists across batches: a 403 on one batch advances the model
+            # for all subsequent batches, not just the failing one.
             current_model_idx = 0
 
             for batch in batches:
                 if current_model_idx >= len(models):
+                    # All models exhausted — skip remaining batches.
                     ai_failed_files.extend(batch)
                     execution_status = "ERROR"
                     continue
@@ -643,6 +788,8 @@ def run_layer3(
                         _, ai_confidence, batch_verdicts = _parse_ai_response(raw)
                         validated = _validate_batch_verdicts(batch_verdicts, batch)
                         if validated is None:
+                            # None means the AI omitted files — treat as failure
+                            # rather than silently accepting an incomplete response.
                             exc = RuntimeError(
                                 f"AI response missing files for batch: {batch}"
                             )
@@ -654,10 +801,12 @@ def run_layer3(
                                 ai_confidence < confidence_threshold
                                 and fv_verdict == Verdict.FAIL
                             ):
+                                # Low-confidence FAIL → WARNING (non-blocking).
                                 fv_verdict = Verdict.WARNING
                             per_file_verdicts[fv.file] = fv_verdict
                         success = True
                     elif exc and _is_model_forbidden(exc):
+                        # 403: this model is not enabled — try the next one.
                         current_model_idx += 1
                     else:
                         break

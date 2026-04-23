@@ -18,6 +18,8 @@ from src.models import LayerResult, Verdict
 
 _DIFF_COVER_TIMEOUT = 60
 
+# Regex to extract the last exception/error line from stderr for clean error reporting.
+# Matches patterns like "FileNotFoundError: ..." or "json.JSONDecodeError: ...".
 _TRACEBACK_EXCEPTION_RE = re.compile(
     r"^([A-Za-z_][\w.]*(?:Error|Exception|Warning))\s*:\s*",
     re.MULTILINE,
@@ -25,6 +27,11 @@ _TRACEBACK_EXCEPTION_RE = re.compile(
 
 
 def _extract_stderr_message(stderr: str) -> str:
+    """Extract the last exception line from stderr for clean error reporting.
+    
+    Searches for the last traceback exception pattern (e.g., "FileNotFoundError: ...").
+    Falls back to the last non-empty line if no exception pattern is found.
+    """
     matches = list(_TRACEBACK_EXCEPTION_RE.finditer(stderr))
     if matches:
         return stderr[matches[-1].start():].strip()
@@ -43,10 +50,11 @@ def _compute_diff_coverage(
         cmd = [
             "diff-cover",
             *coverage_files,
-            "--json-report",
+            "--json-report",  # Output JSON to stdout for structured parsing
             "/dev/stdout",
-            "--quiet",
+            "--quiet",  # Suppress diff-cover's own logging
         ]
+        # Auto-detect base branch from GitHub Actions environment for accurate diff
         base_ref = os.environ.get("GITHUB_BASE_REF", "").strip()
         if base_ref:
             cmd.append(f"--compare-branch=origin/{base_ref}")
@@ -134,7 +142,8 @@ def run_layer1(
 
     # Per-file short-circuit: PASS only when EVERY changed source file
     # present in src_stats has coverage >= threshold AND no source file
-    # is absent from src_stats. Non-source files (tests, docs) are ignored.
+    # is absent from src_stats. Non-source files (tests, docs) are ignored
+    # to prevent false FAILs when test/doc files are added without coverage.
     source_files = [f for f in diff_files if f in per_file]
     absent_files = [
         f for f in diff_files if f not in per_file and not _is_non_source(f)
@@ -171,6 +180,11 @@ def run_layer1(
 
 
 def _is_non_source(filepath: str) -> bool:
+    """Check if a file is a test, doc, or config file (not source code).
+    
+    Used to exclude non-source files from the absent-files check in Layer 1,
+    preventing false FAILs when test/doc files are added without coverage data.
+    """
     lower = filepath.lower()
     if "/test" in lower or lower.startswith("test") or "test_" in lower:
         return True

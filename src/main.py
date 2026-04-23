@@ -9,6 +9,7 @@ for the AI-disabled fallback path.
 from __future__ import annotations
 
 # pyright: reportUnknownMemberType=false, reportPrivateUsage=false
+# Suppress type checking for requests library (dynamic attributes) and private usage.
 import sys
 import traceback
 
@@ -27,6 +28,15 @@ def _get_pr_context(
     config: Config,
     session: requests.Session,
 ) -> tuple[list[str], list[str], str, dict[str, str], set[str]]:
+    """Fetch PR context from GitHub API.
+    
+    Returns a 5-tuple: (changed_files, all_repo_files, head_sha, file_diffs, deleted_files).
+    - changed_files: List of modified/added files in the PR.
+    - all_repo_files: All files in the repo (for test file lookup).
+    - head_sha: Commit SHA of the PR head.
+    - file_diffs: Dict mapping filepath → unified diff patch.
+    - deleted_files: Set of files removed in the PR.
+    """
     pr_url = f"{GITHUB_API_URL}/repos/{config.repo}/pulls/{config.pr_number}/files"
     pr_files = get_paginated(session, pr_url)
 
@@ -54,6 +64,8 @@ def run_pipeline(config: Config) -> Report:
     )
 
     # === Layer 1: Coverage Gate ===
+    # L1 runs first and can short-circuit the entire pipeline if all files
+    # meet the coverage threshold. Otherwise, L2 and L3 proceed.
     l1 = run_layer1(config.coverage_files, config.coverage_threshold, changed_files)
     report.layers.append(l1)
     if l1.short_circuit:
@@ -61,20 +73,26 @@ def run_pipeline(config: Config) -> Report:
         return report
 
     # === Layer 2: File-Matching Heuristic ===
+    # L2 provides matched-test hints for L3 and acts as a fallback gate when AI is disabled.
+    # When AI is enabled, force short_circuit=False so L2 never gates the pipeline.
     l2 = run_layer2(changed_files, all_repo_files, config.test_patterns, config.exclude_patterns)
     report.layers.append(l2)
 
     if config.ai_enabled:
-        l2.short_circuit = False
+        l2.short_circuit = False  # Advisory mode: L2 hints feed L3 but don't gate
     elif l2.short_circuit:
         report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)
         return report
 
     # === Layer 3: AI Judgment ===
+    # L3 is the authoritative evaluator when AI is enabled. It uses L1 coverage data
+    # and L2 matched-test hints as inputs, plus its own triviality detection and AI.
     if not config.ai_enabled:
         report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)
         return report
 
+    # Split changed files into source and test diffs for L3 analysis.
+    # L3 uses source diffs for evaluation and test diffs for relevance matching.
     source_diffs: dict[str, str] = {}
     test_diffs: dict[str, str] = {}
     for filepath, diff in file_diffs.items():
@@ -85,6 +103,7 @@ def run_pipeline(config: Config) -> Report:
         elif _matches_source_pattern(filepath, config.test_patterns):
             source_diffs[filepath] = diff
 
+    # Extract matched-test mappings from L2 verdicts for L3 to use in test relevance computation.
     l2_matched_tests: dict[str, str | None] = {
         fv.file: fv.matched_test for fv in l2.file_verdicts
     }
@@ -134,7 +153,7 @@ def main() -> None:
 
     if report.overall_verdict == Verdict.FAIL:
         print("::error::Test adequacy check FAILED.")
-        sys.exit(1)
+        sys.exit(1)  # Exit code 1 blocks the PR
     if report.overall_verdict == Verdict.WARNING:
         print("::warning::Test adequacy warnings found (non-blocking).")
     else:

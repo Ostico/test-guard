@@ -37,7 +37,12 @@ def _matches_source_pattern(filepath: str, patterns: dict[str, dict[str, str]]) 
 
 
 def _is_test_file(filepath: str, patterns: dict[str, dict[str, str]]) -> bool:
-    """Check if a file is itself a test file."""
+    """Check if a file is itself a test file using pattern heuristics.
+    
+    Instead of running the template substitution, we check if the filename
+    matches known test patterns (e.g., ends with _test, Test, .test., etc.).
+    This avoids false positives from template expansion and is faster.
+    """
     name = PurePosixPath(filepath).stem
     for _lang, mapping in patterns.items():
         template = mapping["test_template"]
@@ -69,7 +74,9 @@ def _match_test_file(
 ) -> str | None:
     """Find a matching test file for a source file.
 
-    Returns the test file path if found, None otherwise.
+    Iterates through all language patterns, checks if the source file matches
+    the language's source pattern, then searches all repo files for a match
+    against the test template. Returns the test file path if found, None otherwise.
     """
     if _is_test_file(source_file, patterns):
         return None  # Don't match test files against themselves
@@ -114,7 +121,7 @@ def run_layer2(
         LayerResult with per-file verdicts.
     """
     file_verdicts: list[FileVerdict] = []
-    changed_set = set(changed_files)
+    changed_set = set(changed_files)  # O(1) lookup for test-file-modified check
 
     for filepath in changed_files:
         # Skip excluded files
@@ -162,7 +169,8 @@ def run_layer2(
                 )
             )
 
-    # Determine overall verdict
+    # Determine overall verdict: FAIL > WARNING > PASS (worst-wins aggregation).
+    # This ensures any file without a matching test fails the layer.
     verdicts = [fv.verdict for fv in file_verdicts]
     if not verdicts:
         overall = Verdict.PASS
