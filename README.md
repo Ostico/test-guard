@@ -3,6 +3,10 @@
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-❤️-ea4aaa?logo=github)](https://github.com/sponsors/Ostico)
 [![Donate via PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://paypal.me/Ostico)
 
+
+[![CI](https://github.com/Ostico/test-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/Ostico/test-guard/actions/workflows/ci.yml)
+
+
 **The only GitHub Action that answers _"Does this PR have adequate tests?"_ — not just _"What's the coverage number?"_**
 
 Test-Guard combines diff coverage, heuristic test-file matching across 19 languages, and AI-powered per-file evaluation into a single pass/fail gate. Coverage-only tools tell you a percentage. Test-Guard tells you whether your changes are actually tested.
