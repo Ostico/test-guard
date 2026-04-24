@@ -1363,6 +1363,14 @@ class TestCallAiForBatch:
         assert "outside_batch_diff" in user_prompt
 
 
+class TestPromptConciseInstruction:
+    def test_prompt_concise_instruction_present(self):
+        """Verify that prompts/test_adequacy.txt contains the 15-word concise instruction."""
+        with open("prompts/test_adequacy.txt", "r") as f:
+            content = f.read()
+        assert "15 words" in content, "Prompt must contain '15 words' instruction for concise reasons"
+
+
 class TestRunLayer3Batching:
     @patch("src.layer3_ai._call_github_models")
     def test_403_triggers_model_fallback(self, mock_call: MagicMock):

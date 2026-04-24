@@ -38,5 +38,5 @@ Set confidence to reflect evidence quality, not just your certainty:
 
 ## Output
 
-One entry per source file. Be concise — one sentence per file reason.
+One entry per source file. Be concise — one sentence, maximum 15 words per file reason. Focus on WHAT is tested, not HOW.
 The response schema is enforced; just return valid JSON.
