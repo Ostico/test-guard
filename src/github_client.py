@@ -35,6 +35,12 @@ _TOKEN_PATTERNS = (
     r"Bearer\s+\S+",
 )
 
+_LAYER_DISPLAY_NAMES = {
+    "layer1": "Coverage Analysis",
+    "layer2": "Test File Matching",
+    "layer3": "Per-File Evaluation",
+}
+
 
 def format_report(report: Report) -> str:
     """Format a Report as a Markdown PR comment."""
@@ -48,11 +54,8 @@ def format_report(report: Report) -> str:
 
     for lr in report.layers:
         layer_emoji = _VERDICT_EMOJI[lr.verdict]
-        layer_name = lr.layer.replace("layer", "Layer ")
-        # Add "(advisory)" suffix to Layer 2 only when Layer 3 is present.
-        # This signals that Layer 2's verdict is informational, not authoritative.
-        suffix = " (advisory)" if lr.layer == "layer2" and has_layer3 else ""
-        lines.append(f"### {layer_name}: {layer_emoji} {lr.verdict.value.upper()}{suffix}")
+        layer_name = _LAYER_DISPLAY_NAMES.get(lr.layer, lr.layer)
+        lines.append(f"### {layer_name}: {layer_emoji} {lr.verdict.value.upper()}")
         lines.append(lr.details)
         lines.append("")
 

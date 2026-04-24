@@ -64,23 +64,23 @@ class TestFormatReport:
     def test_short_circuit_report(self, sample_report):
         md = format_report(sample_report)
         assert "## 🧪 Test-Guard Report" in md
-        assert "Layer 1" in md
+        assert "Coverage Analysis" in md
         assert "92%" in md
         assert "✅" in md
 
     def test_full_report_with_all_layers(self, full_report):
         md = format_report(full_report)
-        assert "Layer 1" in md
-        assert "Layer 2" in md
-        assert "Layer 3" in md
+        assert "Coverage Analysis" in md
+        assert "Test File Matching" in md
+        assert "Per-File Evaluation" in md
         assert "src/billing.py" in md
         assert "WARNING" in md or "⚠️" in md
 
     def test_layer2_advisory_when_layer3_present(self, full_report):
         md = format_report(full_report)
-        assert "(advisory)" in md
-        l2_line = [l for l in md.splitlines() if "Layer 2" in l][0]
-        assert "(advisory)" in l2_line
+        assert "(advisory)" not in md
+        l2_line = [l for l in md.splitlines() if "Test File Matching" in l][0]
+        assert "(advisory)" not in l2_line
 
     def test_layer2_not_advisory_without_layer3(self):
         report = Report(
@@ -90,7 +90,7 @@ class TestFormatReport:
             ]
         )
         md = format_report(report)
-        l2_line = [l for l in md.splitlines() if "Layer 2" in l][0]
+        l2_line = [l for l in md.splitlines() if "Test File Matching" in l][0]
         assert "(advisory)" not in l2_line
 
 
@@ -285,7 +285,7 @@ class TestReportToGitHub:
         report_to_github(sample_report, "ghp_fake", "owner/repo", 1, "abc123")
 
         summary = mock_post_check_run.call_args[0][5]
-        assert "Layer 1" in summary
+        assert "Coverage Analysis" in summary
         assert "92%" in summary
 
     @patch(

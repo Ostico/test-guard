@@ -125,9 +125,9 @@ class TestRunLayer1:
         per_file = {"src/a.py": 95.0, "src/b.py": 88.0}
         mock_cov.return_value = (91.5, per_file, "")
         result = run_layer1(
-            coverage_files=[str(cov)],
-            threshold=80,
-            diff_files=["src/a.py", "src/b.py"],
+           coverage_files=[str(cov)],
+           threshold=80,
+           diff_files=["src/a.py", "src/b.py"],
         )
         assert result.coverage_details == per_file
 
@@ -137,12 +137,22 @@ class TestRunLayer1:
         cov.write_text("<xml/>")
         mock_cov.return_value = (92.0, {"src/auth.py": 92.0}, "")
         result = run_layer1(
-            coverage_files=[str(cov)],
-            threshold=80,
-            diff_files=["src/auth.py", "tests/test_auth.py", "README.md"],
+           coverage_files=[str(cov)],
+           threshold=80,
+           diff_files=["src/auth.py", "tests/test_auth.py", "README.md"],
         )
-        assert result.verdict == Verdict.PASS
-        assert result.short_circuit is True
+         assert result.verdict == Verdict.PASS
+         assert result.short_circuit is True
+
+    def test_empty_diff_files_returns_skip(self, tmp_path):
+        """When diff_files is empty, L1 returns SKIP regardless of coverage files."""
+        cov = tmp_path / "coverage.xml"
+        cov.write_text("<coverage></coverage>")
+        result = run_layer1([str(cov)], 80, diff_files=[])
+        assert result.verdict == Verdict.SKIP
+        assert "No source files" in result.details
+        assert result.file_verdicts == []
+        assert not result.short_circuit
 
 
 _REAL_DIFF_COVER_TRACEBACK = (
