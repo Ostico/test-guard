@@ -342,6 +342,15 @@ Comma-separated also works: `coverage-file: 'php-coverage.xml,js-coverage.xml'`
 
 ---
 
+## Support
+
+If Test-Guard is useful to you, consider supporting its development:
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-❤️-ea4aaa?logo=github)](https://github.com/sponsors/Ostico)
+[![Donate via PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://paypal.me/Ostico)
+
+---
+
 ## License
 
 MIT
