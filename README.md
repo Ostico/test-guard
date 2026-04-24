@@ -223,7 +223,9 @@ Test-Guard reports results in two places:
 ```markdown
 ## 🧪 Test-Guard Report
 
-### Layer 1: ❌ FAIL
+**⚠️ WARNING** — Test coverage has minor gaps — review recommended.
+
+### Coverage Analysis: ❌ FAIL
 Changed lines: 45% covered (threshold: 80%)
 
 | File | Verdict | Reason |
@@ -232,7 +234,7 @@ Changed lines: 45% covered (threshold: 80%)
 | `src/billing.py` | ❌ fail | 25% diff coverage < 80% threshold |
 | `src/new_feature.py` | ❌ fail | not in coverage report |
 
-### Layer 2: ❌ FAIL (advisory)
+### Test File Matching: ❌ FAIL
 File matching: 1 pass, 1 fail
 
 | File | Verdict | Reason |
@@ -240,14 +242,14 @@ File matching: 1 pass, 1 fail
 | `src/auth.py` | ✅ pass | Test modified: tests/test_auth.py |
 | `src/billing.py` | ❌ fail | No matching test file |
 
-### Layer 3: ⚠️ WARNING
+### Per-File Evaluation: ⚠️ WARNING
 Evaluated 3 files: 1 via AI (1 batch), 2 via shortcuts.
 
 | File | Verdict | Reason |
 |:-----|:--------|:-------|
-| `src/auth.py` | ✅ pass | shortcut → coverage 92% ≥ 80% |
-| `src/utils.py` | ⏭️ skip | shortcut → trivial change (whitespace/comments only) |
-| `src/billing.py` | ⚠️ warning | AI: new discount logic partially covered (confidence: 62%) |
+| `src/auth.py` | ✅ pass | shortcut → coverage ≥ threshold |
+| `src/utils.py` | ⏭️ skip | shortcut → trivial whitespace/comment change |
+| `src/billing.py` | ⚠️ warning | AI: discount logic partially covered (confidence: 62%) |
 
 **Result: ⚠️ WARNING**
 ```
