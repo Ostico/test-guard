@@ -154,6 +154,31 @@ class TestRunLayer1:
         assert result.file_verdicts == []
         assert not result.short_circuit
 
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_no_source_files_in_coverage_message(self, mock_cov, tmp_path):
+        """When source files exist in diff_files but NONE appear in the coverage
+        report, details should say 'No changed source files found' rather than
+        showing a vacuous 100% coverage message."""
+        cov = tmp_path / "coverage.xml"
+        cov.write_text("""<?xml version="1.0" ?>
+<coverage version="7.6" timestamp="1700000000" lines-valid="100" lines-covered="100" line-rate="1" branches-covered="0" branches-valid="0" branch-rate="0" complexity="0">
+    <packages>
+        <package name="." line-rate="1" branch-rate="0" complexity="0">
+            <classes>
+                <class name="other.py" filename="other.py" line-rate="1" branch-rate="0" complexity="0">
+                    <lines><line number="1" hits="1"/></lines>
+                </class>
+            </classes>
+        </package>
+    </packages>
+</coverage>""")
+        # diff_files contains a source file not in the coverage report
+        mock_cov.return_value = (100.0, {}, "")
+        result = run_layer1([str(cov)], 80, diff_files=["src/auth.py"])
+        assert result.verdict == Verdict.FAIL  # absent_files not empty, so FAIL
+        assert "No changed source files found in coverage report" in result.details
+        assert "80%" in result.details
+
 
 _REAL_DIFF_COVER_TRACEBACK = (
     "/opt/hostedtoolcache/Python/3.12.13/x64/lib/python3.12/site-packages/"

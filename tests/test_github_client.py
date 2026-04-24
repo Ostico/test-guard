@@ -202,6 +202,41 @@ class TestRedaction:
         assert redact(text) == text
 
 
+class TestTLDR:
+    def test_tldr_pass(self):
+        """PASS report has TL;DR as first content line after header."""
+        r = Report(layers=[LayerResult("layer3", Verdict.PASS, "ok", [])])
+        md = format_report(r)
+        lines = md.strip().splitlines()
+        assert lines[0] == "## 🧪 Test-Guard Report"
+        # line 1 is blank, line 2 is TL;DR
+        assert "✅" in lines[2] and "PASS" in lines[2], f"Expected TL;DR PASS at line 2, got: {lines[2]}"
+        assert "adequate test coverage" in lines[2]
+
+    def test_tldr_fail(self):
+        """FAIL report has TL;DR with FAIL message."""
+        r = Report(layers=[LayerResult("layer1", Verdict.FAIL, "bad", [])])
+        md = format_report(r)
+        lines = md.strip().splitlines()
+        assert "❌" in lines[2] and "FAIL" in lines[2], f"Expected TL;DR FAIL at line 2, got: {lines[2]}"
+        assert "lack adequate" in lines[2]
+
+    def test_tldr_warning(self):
+        """WARNING report has TL;DR with WARNING message."""
+        r = Report(layers=[LayerResult("layer3", Verdict.WARNING, "warn", [])])
+        md = format_report(r)
+        lines = md.strip().splitlines()
+        assert "⚠️" in lines[2] and "WARNING" in lines[2], f"Expected TL;DR WARNING at line 2, got: {lines[2]}"
+        assert "gaps" in lines[2] or "review" in lines[2].lower()
+
+    def test_tldr_skip(self):
+        """SKIP report has TL;DR with SKIP message."""
+        r = Report(layers=[LayerResult("layer1", Verdict.SKIP, "skip", [])])
+        md = format_report(r)
+        lines = md.strip().splitlines()
+        assert "⏭️" in lines[2] and "SKIP" in lines[2], f"Expected TL;DR SKIP at line 2, got: {lines[2]}"
+
+
 class TestReportToGitHub:
     @patch("src.github_client.post_comment")
     @patch("src.github_client.post_check_run")

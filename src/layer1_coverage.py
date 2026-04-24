@@ -188,10 +188,15 @@ def run_layer1(
             layer="layer1",
         ))
 
+    if not source_files:
+        details = f"No changed source files found in coverage report (threshold: {threshold}%)"
+    else:
+        details = f"Changed lines: {total_pct}% covered (threshold: {threshold}%)"
+
     return LayerResult(
         layer="layer1",
         verdict=Verdict.PASS if passed else Verdict.FAIL,
-        details=f"Changed lines: {total_pct}% covered (threshold: {threshold}%)",
+        details=details,
         file_verdicts=file_verdicts,
         short_circuit=passed,
         coverage_details=per_file,

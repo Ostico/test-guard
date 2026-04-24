@@ -41,12 +41,22 @@ _LAYER_DISPLAY_NAMES = {
     "layer3": "Per-File Evaluation",
 }
 
+_TLDR_MESSAGES = {
+    Verdict.PASS: "All changed source files have adequate test coverage.",
+    Verdict.FAIL: "Some changed source files lack adequate test coverage.",
+    Verdict.WARNING: "Test coverage has minor gaps — review recommended.",
+    Verdict.SKIP: "Unable to evaluate — no layers produced a verdict.",
+}
+
 
 def format_report(report: Report) -> str:
     """Format a Report as a Markdown PR comment."""
     emoji = _VERDICT_EMOJI[report.overall_verdict]
+    tldr_msg = _TLDR_MESSAGES[report.overall_verdict]
     lines = [
         "## 🧪 Test-Guard Report",
+        "",
+        f"**{emoji} {report.overall_verdict.value.upper()}** — {tldr_msg}",
         "",
     ]
 
