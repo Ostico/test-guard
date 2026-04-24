@@ -125,6 +125,15 @@ def run_layer1(
             short_circuit=False,
         )
 
+    if not diff_files:
+        return LayerResult(
+            layer="layer1",
+            verdict=Verdict.SKIP,
+            details="No source files to analyze — all changed files are tests or excluded.",
+            file_verdicts=[],
+            short_circuit=False,
+        )
+
     total_pct, per_file, error_reason = _compute_diff_coverage(valid_files)
 
     if total_pct < 0:

@@ -66,7 +66,15 @@ def run_pipeline(config: Config) -> Report:
     # === Layer 1: Coverage Gate ===
     # L1 runs first and can short-circuit the entire pipeline if all files
     # meet the coverage threshold. Otherwise, L2 and L3 proceed.
-    l1 = run_layer1(config.coverage_files, config.coverage_threshold, changed_files)
+    # Pre-filter changed_files for L1: only pass real source files.
+    # Reuses the same filter functions as the L3 diff splitter (lines ~94-104).
+    l1_files = [
+        f for f in changed_files
+        if not _is_excluded(f, config.exclude_patterns)
+        and not _is_test_file(f, config.test_patterns)
+        and _matches_source_pattern(f, config.test_patterns)
+    ]
+    l1 = run_layer1(config.coverage_files, config.coverage_threshold, l1_files)
     report.layers.append(l1)
     if l1.short_circuit:
         report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)

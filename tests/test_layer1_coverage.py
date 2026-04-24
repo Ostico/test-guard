@@ -141,8 +141,8 @@ class TestRunLayer1:
            threshold=80,
            diff_files=["src/auth.py", "tests/test_auth.py", "README.md"],
         )
-         assert result.verdict == Verdict.PASS
-         assert result.short_circuit is True
+        assert result.verdict == Verdict.PASS
+        assert result.short_circuit is True
 
     def test_empty_diff_files_returns_skip(self, tmp_path):
         """When diff_files is empty, L1 returns SKIP regardless of coverage files."""
