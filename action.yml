@@ -1,5 +1,5 @@
 # action.yml
-name: 'Test-Guard'
+name: 'Test Adequacy Guard'
 description: 'Hybrid PR test adequacy gate — coverage + heuristics + AI'
 author: 'ostico'
 
