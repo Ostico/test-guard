@@ -1000,7 +1000,7 @@ class TestEstimateTokens:
         assert _estimate_tokens("x") == 1
 
     def test_large_text(self):
-        assert _estimate_tokens("a" * 4000) == 1001
+        assert _estimate_tokens("a" * 4000) == 1334  # 4000//3 + 1
 
 
 class TestEstimateFileCost:
@@ -1513,6 +1513,30 @@ class TestRunLayer3Batching:
         assert file_map["src/a.py"].verdict == Verdict.SKIP
         assert file_map["src/b.py"].verdict == Verdict.SKIP
         assert "deferred" in file_map["src/b.py"].reason.lower()
+
+
+class TestTokenBudgetConstants:
+    """Pin the token budget constants to their corrected values."""
+
+    def test_input_token_limit(self):
+        assert layer3_ai._INPUT_TOKEN_LIMIT == 8000
+
+    def test_chars_per_token(self):
+        assert layer3_ai._CHARS_PER_TOKEN == 3
+
+    def test_system_overhead_tokens(self):
+        assert layer3_ai._SYSTEM_OVERHEAD_TOKENS == 800
+
+    def test_safety_factor(self):
+        assert layer3_ai._SAFETY_FACTOR == 0.85
+
+    def test_user_prompt_token_budget(self):
+        expected = int((8000 - 800) * 0.85)  # 6120
+        assert layer3_ai._USER_PROMPT_TOKEN_BUDGET == expected
+
+    def test_budget_leaves_headroom_for_system_prompt(self):
+        total = layer3_ai._SYSTEM_OVERHEAD_TOKENS + layer3_ai._USER_PROMPT_TOKEN_BUDGET
+        assert total < layer3_ai._INPUT_TOKEN_LIMIT
 
 
 # ---------------------------------------------------------------------------

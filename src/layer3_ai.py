@@ -374,24 +374,24 @@ _DEFAULT_FALLBACK_CHAIN: tuple[str, ...] = (
     "openai/gpt-4.1-nano",
 )
 
-_CHARS_PER_TOKEN = 4
-_INPUT_TOKEN_LIMIT = 8192
-_SYSTEM_OVERHEAD_TOKENS = 700   # system prompt + JSON schema overhead
-_SAFETY_FACTOR = 0.80
+_CHARS_PER_TOKEN = 3
+_INPUT_TOKEN_LIMIT = 8000
+_SYSTEM_OVERHEAD_TOKENS = 800   # system prompt + JSON schema overhead
+_SAFETY_FACTOR = 0.85
 _USER_PROMPT_TOKEN_BUDGET = int(
     (_INPUT_TOKEN_LIMIT - _SYSTEM_OVERHEAD_TOKENS) * _SAFETY_FACTOR
-)  # ≈ 5993 tokens
+)  # = 6120 tokens
 _FILE_ENTRY_OVERHEAD_TOKENS = 25  # markdown headers, code fences per file
 _BATCH_OVERHEAD_TOKENS = 30       # section headers per batch prompt
 _RETRY_MAX_DIFF_CHARS = 3000      # tighter truncation on 413 retry
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate: ~4 chars per token, minimum 1.
+    """Rough token estimate: ~3 chars per token, minimum 1.
 
-    The 4-char heuristic is a well-known approximation for English/code text
-    with GPT-family tokenizers. It intentionally underestimates to leave
-    headroom; the _SAFETY_FACTOR on the budget absorbs the error.
+    Code diffs tokenize at ~3-3.5 characters per token with GPT-family
+    tokenizers (symbols and punctuation inflate token count vs. prose).
+    The _SAFETY_FACTOR on the budget provides additional headroom.
     """
     return len(text) // _CHARS_PER_TOKEN + 1
 
