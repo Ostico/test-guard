@@ -808,6 +808,10 @@ def run_layer3(
                     elif exc and _is_model_forbidden(exc):
                         # 403: this model is not enabled — try the next one.
                         current_model_idx += 1
+                    elif exc and _is_retryable_size_error(exc):
+                        # 413 after truncation retry: this model can't handle
+                        # the payload even truncated — try a smaller model.
+                        current_model_idx += 1
                     else:
                         break
 

@@ -1362,6 +1362,28 @@ class TestCallAiForBatch:
         assert "matched_diff" in user_prompt
         assert "outside_batch_diff" in user_prompt
 
+    @patch("src.layer3_ai._call_github_models")
+    def test_413_retry_returns_size_error_for_caller(self, mock_call: MagicMock):
+        """When both normal and truncated attempts fail with 413,
+        the returned exception should be a retryable size error
+        so the caller can try a different model."""
+        error_413 = _make_api_error(413, "Request body too large for model")
+        mock_call.side_effect = [error_413, error_413]
+        raw, exc = _call_ai_for_batch(
+            batch_files=["src/a.py"],
+            source_diffs={"src/a.py": "x" * 20_000},
+            test_diffs={},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            matched_tests={"src/a.py": None},
+            model="openai/gpt-4.1-mini",
+            system_prompt="system",
+            token="ghp_fake",
+        )
+        assert raw is None
+        assert exc is not None
+        assert _is_retryable_size_error(exc) is True
+
 
 class TestPromptConciseInstruction:
     def test_prompt_concise_instruction_present(self):
@@ -1513,6 +1535,80 @@ class TestRunLayer3Batching:
         assert file_map["src/a.py"].verdict == Verdict.SKIP
         assert file_map["src/b.py"].verdict == Verdict.SKIP
         assert "deferred" in file_map["src/b.py"].reason.lower()
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_413_triggers_model_fallback(self, mock_call: MagicMock):
+        """When gpt-4.1-mini returns 413 on both normal and truncated attempts,
+        the model loop should escalate to gpt-4.1-nano (just like 403)."""
+        error_413 = _make_api_error(413, "Request body too large for model")
+        mock_call.side_effect = [
+            # First call: gpt-4.1-mini, normal attempt → 413
+            error_413,
+            # Second call: gpt-4.1-mini, truncated retry → 413 again
+            error_413,
+            # Third call: gpt-4.1-nano → success
+            json.dumps({
+                "verdict": "pass",
+                "confidence": 0.9,
+                "files": [{"file": "src/big.py", "verdict": "pass", "reason": "OK"}],
+            }),
+        ]
+        result = run_layer3(
+            source_diffs={"src/big.py": "+ def new_function():\n    return 42\n" * 1000},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/big.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert result.verdict == Verdict.PASS
+        assert mock_call.call_count == 3
+        # Verify model escalation: mini → mini (retry) → nano
+        assert mock_call.call_args_list[0][0][0] == "openai/gpt-4.1-mini"
+        assert mock_call.call_args_list[1][0][0] == "openai/gpt-4.1-mini"
+        assert mock_call.call_args_list[2][0][0] == "openai/gpt-4.1-nano"
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_413_all_models_exhausted_returns_skip(self, mock_call: MagicMock):
+        """When all models fail with 413 (both attempts each), result is SKIP."""
+        error_413 = _make_api_error(413, "Request body too large for model")
+        # gpt-4.1-mini: 2 attempts (normal + retry), gpt-4.1-nano: 2 attempts
+        mock_call.side_effect = [error_413, error_413, error_413, error_413]
+        result = run_layer3(
+            source_diffs={"src/big.py": "+ def new_function():\n    return 42\n" * 1000},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/big.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-4.1-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert result.verdict == Verdict.SKIP
+        assert mock_call.call_count == 4
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_413_no_fallback_for_custom_model(self, mock_call: MagicMock):
+        """Custom models have no fallback chain — 413 means SKIP immediately."""
+        error_413 = _make_api_error(413, "Request body too large for model")
+        mock_call.side_effect = [error_413, error_413]
+        result = run_layer3(
+            source_diffs={"src/big.py": "+ def new_function():\n    return 42\n" * 1000},
+            deleted_files=set(),
+            test_diffs={"tests/test_stuff.py": "+ def test(): ..."},
+            l2_matched_tests={"src/big.py": None},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            model="openai/gpt-5-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        assert result.verdict == Verdict.SKIP
+        assert mock_call.call_count == 2  # normal + retry, no fallback
 
 
 class TestTokenBudgetConstants:
