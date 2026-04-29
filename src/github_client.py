@@ -78,6 +78,13 @@ def format_report(report: Report) -> str:
             lines.append("")
 
     lines.append(f"**Result: {emoji} {report.overall_verdict.value.upper()}**")
+
+    if report.summary:
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        lines.append(report.summary)
+
     return "\n".join(lines)
 
 

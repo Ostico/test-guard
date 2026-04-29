@@ -22,6 +22,7 @@ from src.layer1_coverage import run_layer1
 from src.layer2_heuristic import _is_excluded, _is_test_file, _matches_source_pattern, run_layer2
 from src.layer3_ai import run_layer3
 from src.models import Report, Verdict
+from src.summary import generate_summary
 
 
 def _get_pr_context(
@@ -63,6 +64,11 @@ def run_pipeline(config: Config) -> Report:
         config, session,
     )
 
+    test_files_in_pr = [
+        f for f in changed_files
+        if _is_test_file(f, config.test_patterns)
+    ]
+
     # === Layer 1: Coverage Gate ===
     # L1 runs first and can short-circuit the entire pipeline if all files
     # meet the coverage threshold. Otherwise, L2 and L3 proceed.
@@ -96,6 +102,7 @@ def run_pipeline(config: Config) -> Report:
     # L3 is the authoritative evaluator when AI is enabled. It uses L1 coverage data
     # and L2 matched-test hints as inputs, plus its own triviality detection and AI.
     if not config.ai_enabled:
+        _attach_summary(report, config, changed_files, test_files_in_pr)
         report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)
         return report
 
@@ -129,8 +136,29 @@ def run_pipeline(config: Config) -> Report:
     )
     report.layers.append(l3)
 
+    _attach_summary(report, config, changed_files, test_files_in_pr)
     report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)
     return report
+
+
+def _attach_summary(
+    report: Report,
+    config: Config,
+    changed_files: list[str],
+    test_files_in_pr: list[str],
+) -> None:
+    """Generate and attach summary to report if verdict is WARNING/FAIL."""
+    if report.overall_verdict in (Verdict.PASS, Verdict.SKIP):
+        return
+
+    report.summary = generate_summary(
+        report=report,
+        changed_files=changed_files,
+        test_files_in_pr=test_files_in_pr,
+        coverage_files_provided=bool(config.coverage_files),
+        model=config.ai_model,
+        token=config.github_token,
+    )
 
 
 def main() -> None:

@@ -61,6 +61,7 @@ class Report:
 
     # Use default_factory to create a new list per instance (avoid mutable default).
     layers: list[LayerResult] = field(default_factory=lambda: list[LayerResult]())
+    summary: str | None = None
 
     @property
     def overall_verdict(self) -> Verdict:
