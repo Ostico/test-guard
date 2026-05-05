@@ -7,7 +7,7 @@ import re
 import requests
 
 from src.github_api import GITHUB_API_URL, create_session, post_json
-from src.models import Report, Verdict
+from src.models import FileVerdict, Report, Verdict
 
 _VERDICT_EMOJI = {
     Verdict.PASS: "✅",
@@ -49,6 +49,25 @@ _TLDR_MESSAGES = {
 }
 
 
+def _build_details_summary(file_verdicts: list[FileVerdict]) -> str:
+    """Build a one-line summary for the collapsible <details> element.
+
+    Shows the total file count and a breakdown by verdict, e.g.:
+    "5 files: 3 ✅ pass, 1 ❌ fail, 1 ⚠️ warning"
+    """
+    counts: dict[Verdict, int] = {}
+    for fv in file_verdicts:
+        counts[fv.verdict] = counts.get(fv.verdict, 0) + 1
+
+    total = len(file_verdicts)
+    parts: list[str] = []
+    for v in (Verdict.FAIL, Verdict.WARNING, Verdict.PASS, Verdict.SKIP):
+        if v in counts:
+            parts.append(f"{counts[v]} {_VERDICT_EMOJI[v]} {v.value}")
+
+    return f"{total} files: {', '.join(parts)}"
+
+
 def format_report(report: Report) -> str:
     """Format a Report as a Markdown PR comment."""
     emoji = _VERDICT_EMOJI[report.overall_verdict]
@@ -60,8 +79,6 @@ def format_report(report: Report) -> str:
         "",
     ]
 
-    has_layer3 = any(lr.layer == "layer3" for lr in report.layers)
-
     for lr in report.layers:
         layer_emoji = _VERDICT_EMOJI[lr.verdict]
         layer_name = _LAYER_DISPLAY_NAMES.get(lr.layer, lr.layer)
@@ -70,11 +87,16 @@ def format_report(report: Report) -> str:
         lines.append("")
 
         if lr.file_verdicts:
+            summary_text = _build_details_summary(lr.file_verdicts)
+            lines.append(f"<details><summary>📋 {summary_text}</summary>")
+            lines.append("")
             lines.append("| File | Verdict | Reason |")
             lines.append("|---|---|---|")
             for fv in lr.file_verdicts:
                 fv_emoji = _VERDICT_EMOJI[fv.verdict]
                 lines.append(f"| `{fv.file}` | {fv_emoji} {fv.verdict.value} | {fv.reason} |")
+            lines.append("")
+            lines.append("</details>")
             lines.append("")
 
     lines.append(f"**Result: {emoji} {report.overall_verdict.value.upper()}**")
@@ -94,6 +116,79 @@ def _redact_response_text(text: str, max_len: int = 200) -> str:
     for pattern in _TOKEN_PATTERNS:
         redacted = re.sub(pattern, "[REDACTED]", redacted)
     return redacted
+
+
+_CHECK_RUN_TRUNCATION_BUDGET = 60_000
+
+
+def format_check_run_summary(report: Report) -> str:
+    """Format a compact report for the GitHub Check Run summary field.
+
+    Only includes FAIL and WARNING file verdicts to stay within the
+    65,535-character API limit. Includes a hard truncation safety net.
+    """
+    emoji = _VERDICT_EMOJI[report.overall_verdict]
+    tldr_msg = _TLDR_MESSAGES[report.overall_verdict]
+    lines = [
+        "## 🧪 Test-Guard Report",
+        "",
+        f"**{emoji} {report.overall_verdict.value.upper()}** — {tldr_msg}",
+        "",
+    ]
+
+    for lr in report.layers:
+        layer_emoji = _VERDICT_EMOJI[lr.verdict]
+        layer_name = _LAYER_DISPLAY_NAMES.get(lr.layer, lr.layer)
+        lines.append(f"### {layer_name}: {layer_emoji} {lr.verdict.value.upper()}")
+        lines.append(lr.details)
+        lines.append("")
+
+        if lr.file_verdicts:
+            actionable = [
+                fv for fv in lr.file_verdicts
+                if fv.verdict in (Verdict.FAIL, Verdict.WARNING)
+            ]
+            total = len(lr.file_verdicts)
+            shown = len(actionable)
+
+            if not actionable:
+                lines.append(f"*All {total} files passed — see PR comment for details.*")
+                lines.append("")
+                continue
+
+            if shown < total:
+                lines.append(
+                    f"*Showing {shown} of {total} files with issues"
+                    " (passed files omitted — see PR comment for full report):*"
+                )
+            lines.append("")
+            lines.append("| File | Verdict | Reason |")
+            lines.append("|---|---|---|")
+            for fv in actionable:
+                fv_emoji = _VERDICT_EMOJI[fv.verdict]
+                lines.append(
+                    f"| `{fv.file}` | {fv_emoji} {fv.verdict.value} | {fv.reason} |"
+                )
+            lines.append("")
+
+    lines.append(f"**Result: {emoji} {report.overall_verdict.value.upper()}**")
+
+    if report.summary:
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        lines.append(report.summary)
+
+    result = "\n".join(lines)
+
+    if len(result) > _CHECK_RUN_TRUNCATION_BUDGET:
+        truncation_notice = (
+            "\n\n---\n*Report truncated due to GitHub API limits. "
+            "See the PR comment for the full report.*"
+        )
+        result = result[: _CHECK_RUN_TRUNCATION_BUDGET - len(truncation_notice)] + truncation_notice
+
+    return result
 
 
 def post_comment(
@@ -178,13 +273,14 @@ def report_to_github(
             Verdict.SKIP: "Analysis skipped",
         }
         conclusion = _VERDICT_CONCLUSION[report.overall_verdict]
-        summary = format_report(report)
+        check_run_body = format_check_run_summary(report)
         post_check_run(
-            session, repo, sha, conclusion, desc_map[report.overall_verdict], summary,
+            session, repo, sha, conclusion, desc_map[report.overall_verdict], check_run_body,
         )
 
         if pr_number is not None:
-            post_comment(session, repo, pr_number, summary)
+            comment_body = format_report(report)
+            post_comment(session, repo, pr_number, comment_body)
     except Exception as exc:
         # Catch all exceptions to prevent reporting failures from crashing the pipeline.
         # GitHub Actions will still see the action as successful (exit 0), but the warning
