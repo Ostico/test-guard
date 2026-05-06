@@ -93,13 +93,32 @@ def _extract_clover_paths(root: ET.Element) -> list[str]:
 
 
 def _rewrite_clover(filepath: str, prefix: str) -> str:
-    """Rewrite Clover XML stripping prefix from all <file> name/path attributes."""
+    """Rewrite Clover XML stripping prefix from all <file> name/path attributes.
+
+    Also ensures diff-cover compatibility:
+    - Root <coverage> gets a 'clover' attribute (diff-cover uses .[@clover] detection)
+    - Each <file> gets a 'path' attribute (diff-cover reads file_tree.get("path"))
+    """
     tree = ET.parse(filepath)  # noqa: S314
+    root = tree.getroot()
+
+    # diff-cover detects Clover via xml_document.findall(".[@clover]")
+    # PHPUnit 10+ may omit this attribute — ensure it's present
+    if root.get("clover") is None:
+        root.set("clover", "test-guard")
+
     for file_elem in tree.findall(".//file"):
         for attr in ("name", "path"):
             val = file_elem.get(attr)
             if val and val.startswith(prefix):
                 file_elem.set(attr, val[len(prefix) :])
+
+        # diff-cover's Clover parser reads file_tree.get("path"), but PHPUnit
+        # uses "name". Ensure "path" is always set for diff-cover compatibility.
+        if file_elem.get("path") is None:
+            name_val = file_elem.get("name")
+            if name_val:
+                file_elem.set("path", name_val)
 
     fd, tmp_path = tempfile.mkstemp(suffix=".xml", prefix="tg_clover_")
     os.close(fd)

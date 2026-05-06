@@ -165,6 +165,72 @@ class TestNormalizeClover:
         result = normalize_coverage_file(str(xml), diff_files)
         assert result == str(xml)
 
+    def test_sets_clover_attribute_on_root(self, tmp_path: Path):
+        xml = tmp_path / "clover.xml"
+        xml.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000">
+  <project timestamp="1700000000">
+    <file name="/var/www/app/lib/AuthCookie.php">
+      <line num="10" type="stmt" count="1"/>
+    </file>
+  </project>
+</coverage>""")
+        diff_files = ["lib/AuthCookie.php"]
+        result = normalize_coverage_file(str(xml), diff_files)
+        tree = ET.parse(result)  # noqa: S314
+        root = tree.getroot()
+        assert root.get("clover") == "test-guard"
+
+    def test_preserves_existing_clover_attribute(self, tmp_path: Path):
+        xml = tmp_path / "clover.xml"
+        xml.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<coverage clover="PHPUnit 12.5.6" generated="1700000000">
+  <project timestamp="1700000000">
+    <file name="/var/www/app/lib/AuthCookie.php">
+      <line num="10" type="stmt" count="1"/>
+    </file>
+  </project>
+</coverage>""")
+        diff_files = ["lib/AuthCookie.php"]
+        result = normalize_coverage_file(str(xml), diff_files)
+        tree = ET.parse(result)  # noqa: S314
+        root = tree.getroot()
+        assert root.get("clover") == "PHPUnit 12.5.6"
+
+    def test_sets_path_attribute_from_name(self, tmp_path: Path):
+        xml = tmp_path / "clover.xml"
+        xml.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000">
+  <project timestamp="1700000000">
+    <file name="/var/www/app/lib/AuthCookie.php">
+      <line num="10" type="stmt" count="1"/>
+    </file>
+  </project>
+</coverage>""")
+        diff_files = ["lib/AuthCookie.php"]
+        result = normalize_coverage_file(str(xml), diff_files)
+        tree = ET.parse(result)  # noqa: S314
+        file_elem = tree.find(".//file")
+        assert file_elem.get("path") == "lib/AuthCookie.php"
+        assert file_elem.get("name") == "lib/AuthCookie.php"
+
+    def test_rewrites_existing_path_attribute(self, tmp_path: Path):
+        xml = tmp_path / "clover.xml"
+        xml.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000">
+  <project timestamp="1700000000">
+    <file name="/var/www/app/lib/AuthCookie.php" path="/var/www/app/lib/AuthCookie.php">
+      <line num="10" type="stmt" count="1"/>
+    </file>
+  </project>
+</coverage>""")
+        diff_files = ["lib/AuthCookie.php"]
+        result = normalize_coverage_file(str(xml), diff_files)
+        tree = ET.parse(result)  # noqa: S314
+        file_elem = tree.find(".//file")
+        assert file_elem.get("path") == "lib/AuthCookie.php"
+        assert file_elem.get("name") == "lib/AuthCookie.php"
+
     def test_returns_original_for_non_xml(self, tmp_path: Path):
         lcov = tmp_path / "coverage.info"
         lcov.write_text("SF:/app/src/auth.py\nDA:1,1\nend_of_record\n")
