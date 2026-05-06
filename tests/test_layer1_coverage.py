@@ -435,3 +435,64 @@ class TestRunLayer1MultiFile:
         )
         assert result.verdict == Verdict.SKIP
         assert "not found" in result.details.lower() or "no valid" in result.details.lower()
+
+
+class TestDockerPathNormalization:
+    """Integration tests verifying Layer 1 handles Docker-internal coverage paths."""
+
+    @patch("src.layer1_coverage.subprocess.run")
+    def test_clover_docker_paths_produce_normalized_input(self, mock_run, tmp_path):
+        """When Clover XML has Docker paths, the normalizer rewrites them
+        so diff-cover receives a file with corrected relative paths."""
+        cov = tmp_path / "php-coverage.xml"
+        cov.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000">
+  <project timestamp="1700000000">
+    <file name="/var/www/app/lib/Controller/AuthCookie.php">
+      <line num="10" type="stmt" count="1"/>
+    </file>
+    <file name="/var/www/app/lib/Model/UserDao.php">
+      <line num="5" type="stmt" count="3"/>
+    </file>
+  </project>
+</coverage>""")
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["diff-cover"],
+            returncode=0,
+            stdout='{"total_percent_covered": 90.0, "src_stats": {"lib/Controller/AuthCookie.php": {"percent_covered": 90.0}}}',
+            stderr="",
+        )
+        diff_files = ["lib/Controller/AuthCookie.php", "lib/Model/UserDao.php"]
+        result = run_layer1([str(cov)], threshold=80, diff_files=diff_files)
+
+        # diff-cover was called with a DIFFERENT file (the normalized temp file)
+        cmd = mock_run.call_args[0][0]
+        assert cmd[1] != str(cov)
+        # The matched file should PASS
+        assert any(
+            fv.file == "lib/Controller/AuthCookie.php" and fv.verdict == Verdict.PASS
+            for fv in result.file_verdicts
+        )
+
+    @patch("src.layer1_coverage.subprocess.run")
+    def test_already_relative_paths_use_original_file(self, mock_run, tmp_path):
+        """When paths are already relative, no temp file is created."""
+        cov = tmp_path / "coverage.xml"
+        cov.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000">
+  <project timestamp="1700000000">
+    <file name="lib/AuthCookie.php">
+      <line num="10" type="stmt" count="1"/>
+    </file>
+  </project>
+</coverage>""")
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["diff-cover"],
+            returncode=0,
+            stdout='{"total_percent_covered": 90.0, "src_stats": {"lib/AuthCookie.php": {"percent_covered": 90.0}}}',
+            stderr="",
+        )
+        run_layer1([str(cov)], threshold=80, diff_files=["lib/AuthCookie.php"])
+        cmd = mock_run.call_args[0][0]
+        # Should use original file (no rewriting)
+        assert cmd[1] == str(cov)

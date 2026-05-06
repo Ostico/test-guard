@@ -14,6 +14,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from src.coverage_normalizer import normalize_coverage_file
 from src.models import FileVerdict, LayerResult, Verdict
 
 _DIFF_COVER_TIMEOUT = 60
@@ -134,7 +135,14 @@ def run_layer1(
             short_circuit=False,
         )
 
-    total_pct, per_file, error_reason = _compute_diff_coverage(valid_files)
+    normalized_files = [normalize_coverage_file(f, diff_files) for f in valid_files]
+    try:
+        total_pct, per_file, error_reason = _compute_diff_coverage(normalized_files)
+    finally:
+        # Clean up temp files created by normalization
+        for nf, vf in zip(normalized_files, valid_files, strict=True):
+            if nf != vf:
+                Path(nf).unlink(missing_ok=True)
 
     if total_pct < 0:
         detail = "diff-cover failed to compute coverage"
