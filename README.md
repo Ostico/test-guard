@@ -299,10 +299,25 @@ Layer 1 uses [diff-cover](https://github.com/Bachmann1234/diff-cover), which aut
 
 | Format | Extension | Detection |
 |:-------|:----------|:----------|
-| Cobertura | `.xml` | Default for XML |
-| Clover | `.xml` | `[@clover]` root attribute |
-| JaCoCo | `.xml` | JaCoCo DTD structure |
+| Cobertura | `.xml` | `<coverage>` root with `<packages>` child |
+| Clover | `.xml` | `<coverage>` root with `<project>` child |
+| JaCoCo | `.xml` | `<report>` root with `<package>/<sourcefile>` structure |
 | LCOV | `.info` | Any non-XML file |
+
+### Docker / Container Path Support
+
+When tests run inside a Docker container (or any environment with a different filesystem root), coverage XML files record container-internal absolute paths like `/var/www/app/lib/AuthCookie.php`. These paths don't exist on the GitHub Actions runner, causing diff-cover to find zero file matches.
+
+**Test-Guard fixes this automatically.** Before invoking diff-cover, Layer 1 detects the coverage format and normalizes paths:
+
+| Format | How it works |
+|:-------|:-------------|
+| **Clover** | Reads `<file name="...">` paths, suffix-matches against PR file list to detect the container prefix (e.g., `/var/www/app/`), rewrites paths to relative. |
+| **Cobertura** | Checks `<class filename="...">` — if absolute, detects the prefix and rewrites to relative. If already relative (e.g., pytest-cov output), no action. |
+| **JaCoCo** | Uses diff-cover's built-in `--src-roots` handling. |
+| **LCOV** | No XML normalization possible — ensure paths are relative in your LCOV output. |
+
+**Zero configuration required.** The prefix is auto-detected by matching coverage file paths against the PR's changed files. A `::warning::` annotation is emitted when normalization activates so you can verify it's working.
 
 ---
 
