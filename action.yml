@@ -15,7 +15,7 @@ inputs:
     description: 'Minimum diff-coverage % to auto-pass (0-100).'
     default: '80'
   test-patterns:
-    description: 'Source→test file mapping. "auto" detects from project structure.'
+    description: 'Source→test file mapping. "auto" detects from project structure, or a JSON object of {id: {src_pattern, test_template}} merged onto the defaults.'
     default: 'auto'
   exclude-patterns:
     description: 'Comma-separated glob patterns to exclude from analysis.'

@@ -3,6 +3,11 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+# Cancel superseded runs: only the newest push per PR branch keeps running.
+concurrency:
+  group: dogfood-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
@@ -30,5 +35,5 @@ jobs:
         uses: ./
         with:
           coverage-file: coverage.xml
-          coverage-threshold: '70'
+          coverage-threshold: '100'
           ai-model: 'openai/gpt-5-mini'
