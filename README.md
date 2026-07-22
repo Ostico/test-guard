@@ -154,12 +154,12 @@ jobs:
 | Input | Default | Description |
 |:------|:--------|:------------|
 | `coverage-file` | _(none)_ | Path(s) to coverage report(s) — Cobertura, Clover, JaCoCo, or LCOV. Comma-separated or multiline for multiple files. Layer 1 skips if omitted. |
-| `coverage-threshold` | `80` | Minimum diff-coverage % to auto-pass. |
-| `test-patterns` | `auto` | Source-to-test mapping. Auto-detects 19 languages. |
-| `exclude-patterns` | _(see below)_ | Comma-separated glob patterns to skip. |
-| `ai-enabled` | `true` | Enable Layer 3 AI analysis. |
+| `coverage-threshold` | `80` | Minimum diff-coverage % to auto-pass. Integer, `0`–`100`; other values fail the run. |
+| `test-patterns` | `auto` | Source-to-test mapping. Only `auto` is currently supported (auto-detects 19 languages); any other value fails the run. |
+| `exclude-patterns` | _(see below)_ | Comma-separated glob patterns to skip. Setting this **replaces** the default list. See [Excluding files](#excluding-files). |
+| `ai-enabled` | `true` | Enable Layer 3 AI analysis. Truthy values: `true`, `1`, `yes` (case-insensitive); anything else disables it. |
 | `ai-model` | `openai/gpt-4.1-mini` | GitHub Models model ID. |
-| `ai-confidence-threshold` | `0.7` | AI FAIL verdicts below this confidence become WARNING. |
+| `ai-confidence-threshold` | `0.7` | AI FAIL verdicts below this confidence become WARNING. Float, `0.0`–`1.0`; other values fail the run. |
 
 **Default exclude patterns:**
 
@@ -170,6 +170,14 @@ migrations/**, docs/**,
 conftest.py, setup.py, manage.py, noxfile.py, fabfile.py,
 build.rs
 ```
+
+### Excluding files
+
+Setting `exclude-patterns` **replaces** the default list above — it does not append. To keep the defaults and add your own, copy the default list and extend it.
+
+Files matched by `exclude-patterns` are dropped before any layer runs, so they never affect the verdict.
+
+**Keep `exclude-patterns` in sync with your coverage tool's own exclusions.** These are two independent lists. A changed source file that your coverage tool excludes (e.g. via `.coveragerc`, Jest `coveragePathIgnorePatterns`) is absent from the coverage report, but if Test-Guard still considers it a source file, Layer 1 fails it with **"not in coverage report."** To avoid this, add the same file to `exclude-patterns` so Test-Guard skips it too. Files with non-source extensions (`.json`, `.md`, `.yml`, `.ini`, …) are ignored automatically and need no entry.
 
 ---
 
