@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -184,6 +185,66 @@ class Config:
     ai_confidence_threshold: float  # 0.0-1.0
 
 
+def _parse_custom_test_patterns(raw: str) -> dict[str, dict[str, str]]:
+    """Parse and validate a custom ``test-patterns`` JSON value.
+
+    The value must be a JSON object mapping arbitrary ids to entries of the
+    same shape as the built-in defaults: ``{"src_pattern": <glob>,
+    "test_template": <glob with {name}>}``. Validated entries are merged on
+    top of ``_DEFAULT_TEST_PATTERNS`` (custom keys add to or override defaults).
+
+    Args:
+        raw: The raw ``TEST-PATTERNS`` input (already known to be non-"auto").
+
+    Returns:
+        The merged pattern dict (defaults + custom).
+
+    Raises:
+        ValueError: If the value is not valid JSON, not an object, or any
+            entry is missing required string keys / the ``{name}`` placeholder.
+    """
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as err:
+        raise ValueError(
+            "test-patterns must be 'auto' or a valid JSON object mapping ids to "
+            "{src_pattern, test_template}."
+        ) from err
+
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            "test-patterns must be a JSON object mapping ids to "
+            "{src_pattern, test_template}."
+        )
+
+    for key, entry in parsed.items():
+        if (
+            not isinstance(entry, dict)
+            or "src_pattern" not in entry
+            or "test_template" not in entry
+        ):
+            raise ValueError(
+                f"test-patterns entry {key!r} must be an object with "
+                "'src_pattern' and 'test_template' keys."
+            )
+        src_pattern = entry["src_pattern"]
+        test_template = entry["test_template"]
+        if not isinstance(src_pattern, str) or not isinstance(test_template, str):
+            raise ValueError(
+                f"test-patterns entry {key!r}: src_pattern and test_template "
+                "must be strings."
+            )
+        if "{name}" not in test_template:
+            raise ValueError(
+                f"test-patterns entry {key!r}: test_template must contain the "
+                "{name} placeholder."
+            )
+
+    # Merge on top of defaults: custom entries add new ids or override
+    # a default id that reuses the same key.
+    return {**_DEFAULT_TEST_PATTERNS, **parsed}
+
+
 def parse_config() -> Config:
     """Parse and validate configuration from GitHub Actions environment variables.
     
@@ -228,9 +289,8 @@ def parse_config() -> Config:
         # "auto" uses the built-in 19-language pattern set.
         test_patterns = _DEFAULT_TEST_PATTERNS
     else:
-        raise ValueError(
-            "Custom test patterns not yet supported. Use 'auto' or omit the TEST-PATTERNS input."
-        )
+        # Custom JSON patterns are merged on top of the built-in defaults.
+        test_patterns = _parse_custom_test_patterns(test_patterns_raw)
 
     # Layer 3: Parse AI configuration.
     ai_enabled = _env("AI-ENABLED", "true").lower() in _DEFAULT_AI_ENABLED_VALUES

@@ -155,7 +155,7 @@ jobs:
 |:------|:--------|:------------|
 | `coverage-file` | _(none)_ | Path(s) to coverage report(s) — Cobertura, Clover, JaCoCo, or LCOV. Comma-separated or multiline for multiple files. Layer 1 skips if omitted. |
 | `coverage-threshold` | `80` | Minimum diff-coverage % to auto-pass. Integer, `0`–`100`; other values fail the run. |
-| `test-patterns` | `auto` | Source-to-test mapping. Only `auto` is currently supported (auto-detects 19 languages); any other value fails the run. |
+| `test-patterns` | `auto` | Source-to-test mapping. `auto` auto-detects 19 languages, or pass a JSON object to add/override patterns — see [Custom test patterns](#custom-test-patterns). |
 | `exclude-patterns` | _(see below)_ | Comma-separated glob patterns to skip. Setting this **replaces** the default list. See [Excluding files](#excluding-files). |
 | `ai-enabled` | `true` | Enable Layer 3 AI analysis. Truthy values: `true`, `1`, `yes` (case-insensitive); anything else disables it. |
 | `ai-model` | `openai/gpt-4.1-mini` | GitHub Models model ID. |
@@ -178,6 +178,32 @@ Setting `exclude-patterns` **replaces** the default list above — it does not a
 Files matched by `exclude-patterns` are dropped before any layer runs, so they never affect the verdict.
 
 **Keep `exclude-patterns` in sync with your coverage tool's own exclusions.** These are two independent lists. A changed source file that your coverage tool excludes (e.g. via `.coveragerc`, Jest `coveragePathIgnorePatterns`) is absent from the coverage report, but if Test-Guard still considers it a source file, Layer 1 fails it with **"not in coverage report."** To avoid this, add the same file to `exclude-patterns` so Test-Guard skips it too. Files with non-source extensions (`.json`, `.md`, `.yml`, `.ini`, …) are ignored automatically and need no entry.
+
+### Custom test patterns
+
+`test-patterns` defaults to `auto`, which uses the built-in mappings for 19 languages. To teach Test-Guard a project-specific test layout, pass a **JSON object**. Each entry maps an arbitrary id to a `src_pattern` (glob identifying a source file) and a `test_template` (glob for the expected test, with a `{name}` placeholder for the source file's stem):
+
+```yaml
+- uses: ostico/test-guard@v1
+  with:
+    test-patterns: |
+      {
+        "components": {"src_pattern": "src/**/*.tsx", "test_template": "src/**/__tests__/{name}.test.tsx"},
+        "services":   {"src_pattern": "app/**/*.rb",  "test_template": "spec/**/{name}_spec.rb"}
+      }
+```
+
+How it resolves — for a changed file `src/ui/Button.tsx`, the `components` entry expands `{name}` to `Button` and looks for any repo file matching `src/**/__tests__/Button.test.tsx`:
+
+- test file exists **and** changed in this PR → **PASS**
+- test file exists but **not** changed in this PR → **WARNING**
+- no matching test file → **FAIL**
+
+Rules:
+
+- Custom entries are **merged on top of** the built-in defaults — you keep auto-detection for every other language. Reusing a default id (e.g. `python`) overrides just that entry.
+- `test_template` **must** contain the `{name}` placeholder, and both fields must be strings — otherwise the run fails with a configuration error.
+- Globs use `fnmatch` semantics (`*` matches path separators too); `**` is conventional, not special.
 
 ---
 

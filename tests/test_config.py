@@ -109,13 +109,84 @@ class TestParseConfig:
         monkeypatch.setenv("INPUT_AI-CONFIDENCE-THRESHOLD", "1.0")
         assert parse_config().ai_confidence_threshold == 1.0
 
-    def test_custom_test_patterns_not_supported_raises(self, monkeypatch):
+    def _pattern_env(self, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
         monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
         monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
-        monkeypatch.setenv("INPUT_TEST-PATTERNS", "custom_value")
 
-        with pytest.raises(ValueError, match="Custom test patterns not yet supported"):
+    def test_auto_test_patterns_uses_defaults(self, monkeypatch):
+        """'auto' (and unset) yields the built-in default pattern set unchanged."""
+        from src.config import _DEFAULT_TEST_PATTERNS
+
+        self._pattern_env(monkeypatch)
+        monkeypatch.setenv("INPUT_TEST-PATTERNS", "auto")
+        assert parse_config().test_patterns == _DEFAULT_TEST_PATTERNS
+
+    def test_custom_test_patterns_json_merges_defaults(self, monkeypatch):
+        """A custom JSON pattern is merged on top of the built-in defaults."""
+        self._pattern_env(monkeypatch)
+        monkeypatch.setenv(
+            "INPUT_TEST-PATTERNS",
+            '{"mylang": {"src_pattern": "**/*.ml", "test_template": "**/{name}_test.ml"}}',
+        )
+        patterns = parse_config().test_patterns
+        # Custom entry present.
+        assert patterns["mylang"] == {
+            "src_pattern": "**/*.ml",
+            "test_template": "**/{name}_test.ml",
+        }
+        # Built-in defaults still present (merge, not replace).
+        assert patterns["python"] == {
+            "src_pattern": "**/*.py",
+            "test_template": "tests/test_{name}.py",
+        }
+
+    def test_custom_test_patterns_override_default_key(self, monkeypatch):
+        """A custom entry reusing a default key overrides that default."""
+        self._pattern_env(monkeypatch)
+        monkeypatch.setenv(
+            "INPUT_TEST-PATTERNS",
+            '{"python": {"src_pattern": "**/*.py", "test_template": "spec/{name}_spec.py"}}',
+        )
+        assert parse_config().test_patterns["python"] == {
+            "src_pattern": "**/*.py",
+            "test_template": "spec/{name}_spec.py",
+        }
+
+    def test_invalid_json_test_patterns_raises(self, monkeypatch):
+        self._pattern_env(monkeypatch)
+        monkeypatch.setenv("INPUT_TEST-PATTERNS", "custom_value")
+        with pytest.raises(ValueError, match="test-patterns must be 'auto' or a valid JSON object"):
+            parse_config()
+
+    def test_test_patterns_not_object_raises(self, monkeypatch):
+        self._pattern_env(monkeypatch)
+        monkeypatch.setenv("INPUT_TEST-PATTERNS", "[1, 2, 3]")
+        with pytest.raises(ValueError, match="test-patterns must be a JSON object"):
+            parse_config()
+
+    def test_test_patterns_missing_keys_raises(self, monkeypatch):
+        self._pattern_env(monkeypatch)
+        monkeypatch.setenv("INPUT_TEST-PATTERNS", '{"x": {"src_pattern": "**/*.py"}}')
+        with pytest.raises(ValueError, match=r"src_pattern.*test_template"):
+            parse_config()
+
+    def test_test_patterns_template_missing_name_raises(self, monkeypatch):
+        self._pattern_env(monkeypatch)
+        monkeypatch.setenv(
+            "INPUT_TEST-PATTERNS",
+            '{"x": {"src_pattern": "**/*.py", "test_template": "tests/foo.py"}}',
+        )
+        with pytest.raises(ValueError, match=r"\{name\}"):
+            parse_config()
+
+    def test_test_patterns_non_string_values_raise(self, monkeypatch):
+        self._pattern_env(monkeypatch)
+        monkeypatch.setenv(
+            "INPUT_TEST-PATTERNS",
+            '{"x": {"src_pattern": 123, "test_template": "tests/{name}.py"}}',
+        )
+        with pytest.raises(ValueError, match="must be strings"):
             parse_config()
 
 
