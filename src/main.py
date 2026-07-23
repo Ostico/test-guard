@@ -16,11 +16,12 @@ import traceback
 import requests
 
 from src.config import Config, parse_config
+from src.diff_utils import is_trivial_diff
 from src.github_api import GITHUB_API_URL, create_session, get_json, get_paginated
 from src.github_client import format_report, report_to_github
 from src.layer1_coverage import run_layer1
 from src.layer2_heuristic import _is_excluded, _is_test_file, _matches_source_pattern, run_layer2
-from src.layer3_ai import is_trivial_diff, run_layer3
+from src.layer3_ai import run_layer3
 from src.models import Report, Verdict
 from src.summary import generate_summary
 
