@@ -96,6 +96,28 @@ class TestCompactDiff:
         garbage = "@@ this is not a real hunk @@\nrandom stuff\n"
         assert _compact_diff(garbage, max_context=3) == garbage
 
+    def test_parse_error_returns_unchanged(self):
+        # Hunk header line counts do not match the body → UnidiffParseError.
+        broken = "@@ -1,5 +1,5 @@\n ctx\n-old\n+new\n"
+        assert _compact_diff(broken, max_context=3) == broken
+
+    def test_pure_context_hunk_is_dropped(self):
+        # A hunk with no +/- lines carries no signal and is removed, while a
+        # real change hunk in the same file is kept.
+        diff = "@@ -1,2 +1,2 @@\n ctx1\n ctx2\n@@ -10,1 +10,1 @@\n-old\n+new\n"
+        result = _compact_diff(diff, max_context=3)
+        assert "ctx1" not in result
+        assert "-old" in result and "+new" in result
+
+    def test_binary_file_is_dropped(self):
+        diff = (
+            "diff --git a/i.png b/i.png\n"
+            "index a..b 100644\n"
+            "Binary files a/i.png and b/i.png differ\n"
+        )
+        # Binary entry has no hunks to render → input returned unchanged.
+        assert _compact_diff(diff, max_context=3) == diff
+
     def test_empty_diff_returned_unchanged(self):
         assert _compact_diff("", max_context=3) == ""
 
