@@ -108,12 +108,31 @@ char-cut behaviour. To sanity-check against the *actual* historical code,
 
 The intelligent shrink (adaptive context ladder + larger test-file cap) lifts
 test-signal retention from 64% → 92% and flips the regression gate green,
-while source is sacrificed first (as intended). It spends a few more tokens
-than the dumb cap — each file still fits its per-call budget; the goal is
-fitting the 8k cap with the *right* content, not minimising tokens.
+while source is sacrificed first (as intended).
 
-Agent evaluation of the pre-shrink prompt scored **6/10** understandability
-and flagged the core defect: truncation dropped *test-file* hunks (~54%) more
-than *source* (~35%) — backwards for a test-adequacy gate. The intelligent
-shrink addresses exactly that (test file now drops ~2 of 24 hunks, source ~6
-of 20). Re-run the LLM step to confirm on your own changes.
+**Size axis** (total tokens across all files — must fit, lower isn't the goal):
+
+| variant | total tokens | vs raw |
+|---------|-------------|--------|
+| RAW | 27,775 | — |
+| intelligent shrink (AFTER) | 22,000 | −20% |
+| dumb char-cut (BEFORE) | 20,012 | −27% |
+
+The intelligent shrink spends a few more tokens than the dumb cap on purpose:
+each file still fits its per-call budget, and the goal is fitting the 8k cap
+with the *right* content (test signal), not minimising tokens.
+
+**LLM evaluation.** The pre-shrink prompt scored **6/10** understandability;
+its core defect was truncation dropping *test-file* hunks (~54%) more than
+*source* (~35%) — backwards for a test-adequacy gate. After the intelligent
+shrink the test file drops only ~2 of 24 hunks (source ~6 of 20), and an LLM
+review confirmed the test methods are intact and behaviors identifiable. That
+same eval also caught a real bug — a context-free hunk could emit an invalid
+`@@ -None,...` header — now fixed and covered by a regression test.
+
+**Known limitation (open follow-ups).** With source sacrificed first, a large
+source change can still be truncated past a newly-introduced branch (the eval
+saw `updateSegments`'s new parameter hidden). Remaining work: (1) protect
+source hunks that introduce new branching/signatures, not just give tests more
+budget; (2) surface "% hunks truncated" as an explicit confidence input so a
+weak model lowers confidence instead of trusting a surviving docblock.
