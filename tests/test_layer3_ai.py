@@ -187,6 +187,23 @@ class TestIntelligentShrink:
         assert "-old" in result and "+new" in result
         assert ("x" * 400) not in result  # all fat context shed
 
+    def test_context_free_hunk_stays_valid_diff(self):
+        # Regression: context stripped to 0 makes the hunk begin with a change
+        # line (no source/target number) — the header must still be numeric,
+        # never "@@ -None,...". Re-parsing must succeed.
+        from unidiff import PatchSet
+
+        # leading context + additions + removal, so change-led after ctx=0 trim
+        # source lines = c1,c2,removed = 3; target = c1,c2,added1,added2 = 4
+        diff = ("@@ -5,3 +5,4 @@\n c1\n c2\n+added1\n+added2\n-removed\n")
+        out = _compact_diff(diff, max_context=0)
+        assert "None" not in out
+        parsed = PatchSet(f"--- a/f\n+++ b/f\n{out}")
+        assert len(parsed) == 1
+        # additions and removal preserved
+        assert parsed[0][0].added == 2
+        assert parsed[0][0].removed == 1
+
     def test_test_cap_keeps_more_than_source_cap(self):
         # A diff that overflows the source cap but fits the (larger) test cap
         # keeps more content under the test cap.

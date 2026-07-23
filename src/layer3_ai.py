@@ -375,13 +375,15 @@ def _trim_hunk(hunk: Any, max_context: int) -> str | None:
     start = max(0, change_idx[0] - max_context)
     end = min(len(lines) - 1, change_idx[-1] + max_context)
     kept = lines[start : end + 1]
-    if start == 0:
-        # No leading context dropped: original starts are still correct.
-        src_start, tgt_start = hunk.source_start, hunk.target_start
-    else:
-        # kept[0] precedes the first change, so it is a context line and
-        # carries both a source and a target line number.
-        src_start, tgt_start = kept[0].source_line_no, kept[0].target_line_no
+    # Hunk start = first kept line that exists on each side. A kept line may be
+    # an addition (no source line) or a removal (no target line) — e.g. when
+    # context is trimmed to 0 the hunk begins with a change — so pick the first
+    # line that actually carries each number, falling back to the original
+    # start for a side with no lines at all (pure add / pure delete).
+    src_nums = [ln.source_line_no for ln in kept if ln.source_line_no is not None]
+    tgt_nums = [ln.target_line_no for ln in kept if ln.target_line_no is not None]
+    src_start = src_nums[0] if src_nums else hunk.source_start
+    tgt_start = tgt_nums[0] if tgt_nums else hunk.target_start
     src_len = sum(1 for ln in kept if not ln.is_added)
     tgt_len = sum(1 for ln in kept if not ln.is_removed)
     header = f"@@ -{src_start},{src_len} +{tgt_start},{tgt_len} @@\n"
