@@ -20,7 +20,7 @@ from src.github_api import GITHUB_API_URL, create_session, get_json, get_paginat
 from src.github_client import format_report, report_to_github
 from src.layer1_coverage import run_layer1
 from src.layer2_heuristic import _is_excluded, _is_test_file, _matches_source_pattern, run_layer2
-from src.layer3_ai import run_layer3
+from src.layer3_ai import is_trivial_diff, run_layer3
 from src.models import Report, Verdict
 from src.summary import generate_summary
 
@@ -80,7 +80,13 @@ def run_pipeline(config: Config) -> Report:
         and not _is_test_file(f, config.test_patterns)
         and _matches_source_pattern(f, config.test_patterns)
     ]
-    l1 = run_layer1(config.coverage_files, config.coverage_threshold, l1_files)
+    # Source files whose changed lines are all trivial (whitespace/comments)
+    # have nothing to cover; tell Layer 1 so it doesn't FAIL them as
+    # "not in coverage report" (they never appear in diff-cover's src_stats).
+    trivial_files = {f for f in l1_files if f in file_diffs and is_trivial_diff(file_diffs[f])}
+    l1 = run_layer1(
+        config.coverage_files, config.coverage_threshold, l1_files, trivial_files
+    )
     report.layers.append(l1)
     if l1.short_circuit:
         report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)

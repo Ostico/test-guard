@@ -545,6 +545,29 @@ class TestRunLayer3:
         mock_call.assert_not_called()
         assert result.verdict == Verdict.PASS
 
+    @patch("src.layer3_ai._call_github_models")
+    def test_coverage_below_threshold_with_relevant_tests_fails_shortcut(
+        self, mock_call: MagicMock
+    ):
+        # Gate 5: coverage present but below threshold AND a relevant changed
+        # test exists -> shortcut FAIL with the "relevant tests exist but
+        # insufficient" reason (covers the verdict==FAIL reason branch).
+        result = run_layer3(
+            source_diffs={"src/user.py": "+ def new_behaviour():\n+     return compute()"},
+            deleted_files=set(),
+            test_diffs={"tests/test_user.py": "+ def test_new_behaviour():\n+     assert run()"},
+            l2_matched_tests={"src/user.py": ["tests/test_user.py"]},
+            coverage_details={"src/user.py": 50.0},
+            coverage_threshold=80.0,
+            model="openai/gpt-5-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        mock_call.assert_not_called()
+        assert result.verdict == Verdict.FAIL
+        fv = {v.file: v for v in result.file_verdicts}["src/user.py"]
+        assert "relevant tests exist but insufficient" in fv.reason
+
 
 class TestCallGithubModels:
     @patch("src.layer3_ai.OpenAI")

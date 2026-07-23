@@ -103,6 +103,46 @@ class TestRunLayer1:
         )
 
     @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_trivial_absent_file_passes_not_fails(self, mock_cov, tmp_path):
+        # A source file absent from src_stats because its changes are trivial
+        # (whitespace/comments) has no executable lines to cover -> it must PASS,
+        # not FAIL, and must not block the short-circuit.
+        cov = tmp_path / "coverage.xml"
+        cov.write_text("<xml/>")
+        mock_cov.return_value = (100.0, {"src/auth.py": 100.0}, "")
+        result = run_layer1(
+            coverage_files=[str(cov)],
+            threshold=80,
+            diff_files=["src/auth.py", "src/docs_only.py"],
+            trivial_files={"src/docs_only.py"},
+        )
+        assert result.verdict == Verdict.PASS
+        assert result.short_circuit is True
+        trivial_fv = next(
+            fv for fv in result.file_verdicts if fv.file == "src/docs_only.py"
+        )
+        assert trivial_fv.verdict == Verdict.PASS
+        assert "no executable lines changed" in trivial_fv.reason
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_non_trivial_absent_file_still_fails(self, mock_cov, tmp_path):
+        # An absent file NOT marked trivial is a real coverage gap -> FAIL.
+        cov = tmp_path / "coverage.xml"
+        cov.write_text("<xml/>")
+        mock_cov.return_value = (100.0, {"src/auth.py": 100.0}, "")
+        result = run_layer1(
+            coverage_files=[str(cov)],
+            threshold=80,
+            diff_files=["src/auth.py", "src/new_feature.py"],
+            trivial_files={"src/docs_only.py"},  # unrelated file marked trivial
+        )
+        assert result.verdict == Verdict.FAIL
+        assert any(
+            fv.file == "src/new_feature.py" and fv.verdict == Verdict.FAIL
+            for fv in result.file_verdicts
+        )
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
     def test_pass_exactly_at_threshold(self, mock_cov, tmp_path):
         cov = tmp_path / "coverage.xml"
         cov.write_text("<xml/>")

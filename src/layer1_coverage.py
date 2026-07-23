@@ -105,6 +105,7 @@ def run_layer1(
     coverage_files: list[str],
     threshold: int,
     diff_files: list[str],
+    trivial_files: set[str] | None = None,
 ) -> LayerResult:
     if not coverage_files:
         return LayerResult(
@@ -161,10 +162,18 @@ def run_layer1(
     # present in src_stats has coverage >= threshold AND no source file
     # is absent from src_stats. Non-source files (tests, docs) are ignored
     # to prevent false FAILs when test/doc files are added without coverage.
+    trivial = trivial_files or set()
     source_files = [f for f in diff_files if f in per_file]
-    absent_files = [
+    absent_candidates = [
         f for f in diff_files if f not in per_file and not _is_non_source(f)
     ]
+    # A changed source file absent from src_stats has no *executable* changed
+    # lines. When its changes are trivial (whitespace/comments/docstrings only)
+    # there is nothing to cover, so it must not FAIL — this mirrors Layer 3,
+    # which already skips trivial changes. Only genuinely un-measured files
+    # (executable changes but missing from the report) remain a real gap.
+    trivial_absent = [f for f in absent_candidates if f in trivial]
+    absent_files = [f for f in absent_candidates if f not in trivial]
     all_above = all(per_file.get(f, 0.0) >= threshold for f in source_files)
     passed = bool(source_files) and all_above and not absent_files
 
@@ -193,6 +202,13 @@ def run_layer1(
             file=f,
             verdict=Verdict.FAIL,
             reason="not in coverage report",
+            layer="layer1",
+        ))
+    for f in trivial_absent:
+        file_verdicts.append(FileVerdict(
+            file=f,
+            verdict=Verdict.PASS,
+            reason="no executable lines changed (trivial: whitespace/comments)",
             layer="layer1",
         ))
 
