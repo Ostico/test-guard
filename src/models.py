@@ -8,7 +8,7 @@ from enum import Enum
 
 class Verdict(Enum):
     """Test adequacy verdict for a file or overall report.
-    
+
     Priority (worst-wins): FAIL > WARNING > PASS > SKIP.
     SKIP means the layer was unable to produce a verdict (e.g., no coverage data).
     """
@@ -36,7 +36,7 @@ class FileVerdict:
 @dataclass
 class LayerResult:
     """Result from one layer of analysis.
-    
+
     Attributes:
         layer: Layer identifier (e.g., "layer1", "layer2", "layer3").
         verdict: Verdict for this layer (PASS/FAIL/WARNING/SKIP).
@@ -57,7 +57,7 @@ class LayerResult:
 @dataclass
 class Report:
     """Final report aggregating all layers.
-    
+
     The overall_verdict property implements a priority-based aggregation:
     - If Layer 3 ran and returned non-SKIP, its verdict is authoritative (overrides L1+L2).
     - Otherwise, worst-wins across all layers: FAIL > WARNING > PASS > SKIP.
@@ -70,7 +70,7 @@ class Report:
     @property
     def overall_verdict(self) -> Verdict:
         """Compute the final verdict by priority: Layer 3 authority, then worst-wins.
-        
+
         Returns:
             Verdict: FAIL > WARNING > PASS > SKIP (worst-wins if no Layer 3 authority).
         """

@@ -29,14 +29,14 @@ _TRACEBACK_EXCEPTION_RE = re.compile(
 
 def _extract_stderr_message(stderr: str) -> str:
     """Extract the last exception line from stderr for clean error reporting.
-    
+
     Searches for the last traceback exception pattern (e.g., "FileNotFoundError: ...").
     Falls back to the last non-empty line if no exception pattern is found.
     """
     matches = list(_TRACEBACK_EXCEPTION_RE.finditer(stderr))
     if matches:
         return stderr[matches[-1].start():].strip()
-    lines = [l.strip() for l in stderr.strip().splitlines() if l.strip()]
+    lines = [ln.strip() for ln in stderr.strip().splitlines() if ln.strip()]
     return lines[-1] if lines else stderr.strip()
 
 
@@ -213,7 +213,7 @@ def run_layer1(
 
 def _is_non_source(filepath: str) -> bool:
     """Check if a file is a test, doc, or config file (not source code).
-    
+
     Used to exclude non-source files from the absent-files check in Layer 1,
     preventing false FAILs when test/doc files are added without coverage data.
     """

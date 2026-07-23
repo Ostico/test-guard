@@ -30,7 +30,7 @@ def _get_pr_context(
     session: requests.Session,
 ) -> tuple[list[str], list[str], str, dict[str, str], set[str]]:
     """Fetch PR context from GitHub API.
-    
+
     Returns a 5-tuple: (changed_files, all_repo_files, head_sha, file_diffs, deleted_files).
     - changed_files: List of modified/added files in the PR.
     - all_repo_files: All files in the repo (for test file lookup).

@@ -38,7 +38,7 @@ def _matches_source_pattern(filepath: str, patterns: dict[str, dict[str, str]]) 
 
 def _is_test_file(filepath: str, patterns: dict[str, dict[str, str]]) -> bool:
     """Check if a file is itself a test file using pattern heuristics.
-    
+
     Instead of running the template substitution, we check if the filename
     matches known test patterns (e.g., ends with _test, Test, .test., etc.).
     This avoids false positives from template expansion and is faster.

@@ -17,8 +17,8 @@ from src.layer3_ai import (
     _context_ladder,
     _count_change_hunks,
     _estimate_file_cost,
-    _evidence_warning,
     _estimate_tokens,
+    _evidence_warning,
     _filter_test_diffs_for_batch,
     _is_model_forbidden,
     _is_retryable_size_error,
@@ -1657,9 +1657,11 @@ class TestCallAiForBatch:
 class TestPromptConciseInstruction:
     def test_prompt_concise_instruction_present(self):
         """Verify that prompts/test_adequacy.txt contains the 15-word concise instruction."""
-        with open("prompts/test_adequacy.txt", "r") as f:
+        with open("prompts/test_adequacy.txt") as f:
             content = f.read()
-        assert "15 words" in content, "Prompt must contain '15 words' instruction for concise reasons"
+        assert "15 words" in content, (
+            "Prompt must contain '15 words' instruction for concise reasons"
+        )
 
 
 class TestRunLayer3Batching:
@@ -1897,7 +1899,7 @@ class TestTokenBudgetConstants:
 
     def test_user_prompt_token_budget(self):
         expected = int((8000 - 800) * 0.85)  # 6120
-        assert layer3_ai._USER_PROMPT_TOKEN_BUDGET == expected
+        assert expected == layer3_ai._USER_PROMPT_TOKEN_BUDGET
 
     def test_budget_leaves_headroom_for_system_prompt(self):
         total = layer3_ai._SYSTEM_OVERHEAD_TOKENS + layer3_ai._USER_PROMPT_TOKEN_BUDGET
