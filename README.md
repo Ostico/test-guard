@@ -153,6 +153,7 @@ jobs:
 | `coverage-threshold` | `80` | Minimum diff-coverage % to auto-pass. Integer, `0`–`100`; other values fail the run. |
 | `test-patterns` | `auto` | Source-to-test mapping. `auto` auto-detects 19 languages, or pass a JSON object to add/override patterns — see [Custom test patterns](#custom-test-patterns). |
 | `exclude-patterns` | _(see below)_ | Comma-separated glob patterns to skip. Setting this **replaces** the default list. See [Excluding files](#excluding-files). |
+| `extra-exclude-patterns` | _(empty)_ | Comma-separated glob patterns to exclude **in addition** to `exclude-patterns` (unioned, deduped). Add repo-specific excludes here without re-listing the defaults. |
 | `ai-enabled` | `true` | Enable Layer 3 AI analysis. Truthy values: `true`, `1`, `yes` (case-insensitive); anything else disables it. |
 | `ai-model` | `openai/gpt-4.1-mini` | GitHub Models model ID. |
 | `ai-confidence-threshold` | `0.7` | AI FAIL verdicts below this confidence become WARNING. Float, `0.0`–`1.0`; other values fail the run. |
@@ -169,9 +170,17 @@ build.rs
 
 ### Excluding files
 
-Setting `exclude-patterns` **replaces** the default list above — it does not append. To keep the defaults and add your own, copy the default list and extend it.
+Two independent knobs:
 
-Files matched by `exclude-patterns` are dropped before any layer runs, so they never affect the verdict.
+- **`extra-exclude-patterns`** (usually what you want) — unioned **on top of** the defaults, so you add your own without re-listing anything. Deduped against the base.
+  ```yaml
+  extra-exclude-patterns: 'benchmarks/**,fixtures/**'
+  ```
+- **`exclude-patterns`** — a full **override** of the default list. Reach for this only when you need to *un-exclude* a default (e.g. analyze a `*.config.js` that's actually real source); you then own the whole list.
+
+The two compose: the final exclude set is `exclude-patterns ∪ extra-exclude-patterns`. Files matched by either are dropped before any layer runs, so they never affect the verdict.
+
+> The defaults stay deliberately conservative — a test-adequacy gate should never *silently* skip a whole tree of code for you. Repo-specific skips (benchmark harnesses, fixture generators) belong in `extra-exclude-patterns`, not in the shipped defaults.
 
 **Keep `exclude-patterns` in sync with your coverage tool's own exclusions.** These are two independent lists. A changed source file that your coverage tool excludes (e.g. via `.coveragerc`, Jest `coveragePathIgnorePatterns`) is absent from the coverage report, but if Test-Guard still considers it a source file, Layer 1 fails it with **"not in coverage report."** To avoid this, add the same file to `exclude-patterns` so Test-Guard skips it too. Files with non-source extensions (`.json`, `.md`, `.yml`, `.ini`, …) are ignored automatically and need no entry.
 

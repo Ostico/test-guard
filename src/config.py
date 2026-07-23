@@ -281,8 +281,18 @@ def parse_config() -> Config:
         raise ValueError(f"coverage-threshold must be 0-100, got: {coverage_threshold}")
 
     # Layer 2: Parse exclude patterns and test patterns.
+    # `exclude-patterns` is a full override of the built-in defaults (set it to
+    # drop or replace a default). `extra-exclude-patterns` is UNIONED on top of
+    # whatever the base resolves to, so a repo can add its own excludes (e.g.
+    # `benchmarks/**`) without re-listing the whole default set. Union — not
+    # override — mirrors how `test-patterns` merges onto the defaults, and keeps
+    # the base override as the escape hatch for un-excluding a default.
     exclude_raw = _env("EXCLUDE-PATTERNS", _DEFAULT_EXCLUDE)
-    exclude_patterns = [p.strip() for p in exclude_raw.split(",") if p.strip()]
+    extra_raw = _env("EXTRA-EXCLUDE-PATTERNS", "")
+    base_excludes = [p.strip() for p in exclude_raw.split(",") if p.strip()]
+    extra_excludes = [p.strip() for p in extra_raw.split(",") if p.strip()]
+    # dict.fromkeys keeps base-then-extra order while de-duplicating.
+    exclude_patterns = list(dict.fromkeys(base_excludes + extra_excludes))
 
     test_patterns_raw = _env("TEST-PATTERNS", "auto")
     if test_patterns_raw == "auto":

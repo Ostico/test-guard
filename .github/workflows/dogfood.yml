@@ -40,5 +40,5 @@ jobs:
           # Repo-specific: benchmarks/ is a standalone perf harness, not product
           # code under test. Kept OUT of the shipped defaults on purpose — a
           # test-adequacy gate should not silently skip a code tree for every
-          # user. Mirrors action.yml's default exclude list + benchmarks/**.
-          exclude-patterns: '*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,*.sql,migrations/**,docs/**,*.config.js,*.config.ts,*.config.mjs,*.config.cjs,Gruntfile.js,Gulpfile.js,conftest.py,setup.py,manage.py,noxfile.py,fabfile.py,build.rs,benchmarks/**'
+          # user. Unioned onto the defaults, so no need to re-list them.
+          extra-exclude-patterns: 'benchmarks/**'
