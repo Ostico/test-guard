@@ -1310,17 +1310,20 @@ class TestFilterTestDiffsForBatch:
         )
         assert "tests/test_a.py" in result
 
-    def test_matched_test_outside_batch_included_as_candidate(self):
+    def test_matched_test_outside_batch_excluded(self):
+        # A test matched to a source in ANOTHER batch travels with its own
+        # source, not this one (reverses the old "BUG 4" every-batch behavior
+        # that blew the token cap).
         result = _filter_test_diffs_for_batch(
             batch_files=["src/a.py"],
             test_diffs={"tests/test_b.py": "diff_b"},
             matched_tests={"src/a.py": None, "src/b.py": "tests/test_b.py"},
         )
-        assert "tests/test_b.py" in result
+        assert "tests/test_b.py" not in result
 
-    def test_shared_test_matched_outside_batch_still_included(self):
-        """BUG 4: A test matched to an out-of-batch file should still appear
-        as a candidate so the AI can judge relevance."""
+    def test_out_of_batch_matched_excluded_but_true_candidate_kept(self):
+        # conftest is matched to src/config (not in this batch) -> excluded here.
+        # test_auth is matched to src/auth (in batch) -> included.
         result = _filter_test_diffs_for_batch(
             batch_files=["src/auth.py"],
             test_diffs={
@@ -1333,7 +1336,7 @@ class TestFilterTestDiffsForBatch:
             },
         )
         assert "tests/test_auth.py" in result
-        assert "conftest.py" in result
+        assert "conftest.py" not in result
 
     def test_unmatched_candidate_included(self):
         result = _filter_test_diffs_for_batch(
@@ -1343,7 +1346,9 @@ class TestFilterTestDiffsForBatch:
         )
         assert "tests/test_helpers.py" in result
 
-    def test_combination_includes_all_test_diffs(self):
+    def test_combination_matched_in_batch_and_true_candidates(self):
+        # test_a matched to in-batch src/a -> included; test_b matched to
+        # out-of-batch src/b -> excluded; test_utils unmatched -> candidate.
         result = _filter_test_diffs_for_batch(
             batch_files=["src/a.py"],
             test_diffs={
@@ -1357,10 +1362,10 @@ class TestFilterTestDiffsForBatch:
             },
         )
         assert "tests/test_a.py" in result
-        assert "tests/test_b.py" in result
-        assert "tests/test_utils.py" in result
+        assert "tests/test_b.py" not in result   # matched elsewhere
+        assert "tests/test_utils.py" in result   # true candidate
 
-    def test_empty_batch_includes_all_as_candidates(self):
+    def test_empty_batch_includes_only_true_candidates(self):
         result = _filter_test_diffs_for_batch(
             batch_files=[],
             test_diffs={
@@ -1369,8 +1374,8 @@ class TestFilterTestDiffsForBatch:
             },
             matched_tests={"src/a.py": "tests/test_a.py"},
         )
-        assert "tests/test_a.py" in result
-        assert "tests/test_unmatched.py" in result
+        assert "tests/test_a.py" not in result       # matched to src/a, not here
+        assert "tests/test_unmatched.py" in result   # true candidate
 
 
 class TestBatchFiles:
@@ -1588,7 +1593,7 @@ class TestCallAiForBatch:
         mock_call.assert_called_once()
 
     @patch("src.layer3_ai._call_github_models")
-    def test_includes_all_test_diffs_in_batch_prompt(self, mock_call: MagicMock):
+    def test_includes_only_relevant_test_diffs_in_batch_prompt(self, mock_call: MagicMock):
         mock_call.return_value = '{"verdict":"pass","confidence":0.9,"files":[]}'
         _call_ai_for_batch(
             batch_files=["src/a.py"],
@@ -1608,8 +1613,8 @@ class TestCallAiForBatch:
             token="ghp_fake",
         )
         user_prompt = mock_call.call_args[0][2]
-        assert "matched_diff" in user_prompt
-        assert "outside_batch_diff" in user_prompt
+        assert "matched_diff" in user_prompt          # matched to in-batch source
+        assert "outside_batch_diff" not in user_prompt  # matched to another batch
 
     @patch("src.layer3_ai._call_github_models")
     def test_413_retry_returns_size_error_for_caller(self, mock_call: MagicMock):

@@ -30,15 +30,23 @@ worst call against `_INPUT_TOKEN_LIMIT`:
 python benchmarks/benchmark_compaction.py --assert-fits-8k   # gate: exit≠0 if any call > cap
 ```
 
-> **Finding (this fixture).** All 18 simulated calls land at **16k–18k tokens,
-> ~2× the 8k cap**, so the gate FAILS. Root cause is *not* per-file size (the
-> largest compacted file is ~4k real tokens) — it is that `_build_ai_prompt`
-> attaches **every** test-file diff to **every** batch by design, so a PR with a
-> large aggregate test payload cannot fit any call under 8k. Per-file compaction
-> and the intelligent shrink do not address this batch-assembly overflow; a fix
-> (bounding the per-call test payload) is a separate, intent-changing decision.
-> test↔source matching here is a filename-stem proxy for the Layer 2 heuristic,
-> so counts are approximate but the order of magnitude is real.
+> **History (this fixture).** Originally all 18 calls landed at **16k–18k
+> tokens, ~2× the 8k cap** (gate FAILED) — not from per-file size (largest
+> compacted file ~4k) but because `_build_ai_prompt` attached **every** test
+> diff to **every** batch. Two fixes resolved it:
+> 1. **Hard ceiling** (`_build_ai_prompt`): shed least-valuable test diffs until
+>    the assembled prompt fits `_USER_PROMPT_TOKEN_BUDGET` — the language-
+>    agnostic guarantee. Alone: max call 16k→**5,156**, 0/18 over.
+> 2. **Batch filter fix** (`_filter_test_diffs_for_batch`): a test matched to a
+>    source travels only with that source's batch; only truly-unmatched tests
+>    ride every batch. Reduces how much the ceiling must shed → **mean call
+>    4,269 → 3,072, max 5,043, 0/18 over, gate PASSES.**
+>
+> Remaining lever (optional, best-effort): qualifier-tolerant / multi-test
+> matching shrinks the unmatched-candidate floor further where naming permits;
+> non-standard test names stay the author's responsibility (custom
+> `test_patterns` or a rename). test↔source matching in this sim is a
+> filename-stem proxy for the Layer 2 heuristic, so counts are approximate.
 
 ## Telling an intelligent shrink from a dumb one
 

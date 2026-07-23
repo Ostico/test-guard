@@ -696,16 +696,20 @@ def _filter_test_diffs_for_batch(
       - Test files matched to source files *outside* this batch.
     """
     relevant: set[str] = set()
+    # Test files matched to a source *in this batch* travel with that source.
     for src in batch_files:
         matched = matched_tests.get(src)
         if matched and matched in test_diffs:
             relevant.add(matched)
-    # Collect all test files that are matched to any source (across all batches).
-    batch_matched = {t for src in batch_files
-                     for t in [matched_tests.get(src)] if t is not None}
+    # Only test files matched to *no* source anywhere are true candidates that
+    # ride every batch. A test matched to a source in a different batch is NOT
+    # re-added here — it travels with its own source. (This reverses the earlier
+    # "BUG 4" behavior of attaching every out-of-batch matched test to every
+    # batch, which inflated every prompt with the whole test payload and blew
+    # the model's input-token cap.)
+    globally_matched = {t for t in matched_tests.values() if t is not None}
     for test_file in test_diffs:
-        if test_file not in batch_matched:
-            # Not matched to any source in this batch — treat as candidate.
+        if test_file not in globally_matched:
             relevant.add(test_file)
     return {t: test_diffs[t] for t in sorted(relevant)}
 
