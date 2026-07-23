@@ -98,15 +98,22 @@ char-cut behaviour. To sanity-check against the *actual* historical code,
 
 ## Reference results (fixture, tiktoken o200k_base)
 
-| metric | value |
-|--------|-------|
-| RAW total | 27,775 tok |
-| **AFTER (unidiff)** | **17,788 tok — 35% fewer than raw** |
-| BEFORE (char-cut) | 20,012 tok — 27% fewer than raw |
-| eval prompt (source+test pair) | ~4,590 tok (fits 8k cap / 6,120 budget) |
+**Signal retention** (the quality axis — % of changed +/- lines kept):
 
-Agent evaluation of the compressed prompt: valid unified diff, clean
-truncation markers, **6/10** understandability. Key finding: truncation drops
-*test-file* hunks (~54%) more than *source* hunks (~35%) — backwards for a
-test-adequacy gate. Follow-up: bias the budget to protect test hunks first and
-surface "% test hunks truncated" as an explicit confidence input.
+| role | dumb (uniform cap) | intelligent shrink | old char-cut baseline |
+|------|-------------------|--------------------|-----------------------|
+| test | 64% | **92%** | 70% |
+| source | 68% | 73% | 70% |
+| `--assert-intelligent` gate | FAIL | **PASS** | — |
+
+The intelligent shrink (adaptive context ladder + larger test-file cap) lifts
+test-signal retention from 64% → 92% and flips the regression gate green,
+while source is sacrificed first (as intended). It spends a few more tokens
+than the dumb cap — each file still fits its per-call budget; the goal is
+fitting the 8k cap with the *right* content, not minimising tokens.
+
+Agent evaluation of the pre-shrink prompt scored **6/10** understandability
+and flagged the core defect: truncation dropped *test-file* hunks (~54%) more
+than *source* (~35%) — backwards for a test-adequacy gate. The intelligent
+shrink addresses exactly that (test file now drops ~2 of 24 hunks, source ~6
+of 20). Re-run the LLM step to confirm on your own changes.

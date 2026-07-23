@@ -199,8 +199,10 @@ def run(args: argparse.Namespace) -> None:
     rows = []
     for f in files:
         patch = f["patch"]
-        after = m._sanitize_diff(patch, max_chars=_MAX_CHARS)
-        before = baseline_sanitize(patch, max_chars=_MAX_CHARS)
+        # AFTER mirrors the real pipeline: test diffs get the larger role cap.
+        cap = m._test_max_chars(_MAX_CHARS) if f["role"] == "test" else _MAX_CHARS
+        after = m._sanitize_diff(patch, max_chars=cap)
+        before = baseline_sanitize(patch, max_chars=_MAX_CHARS)  # old uniform cap
         r, a, b = count(patch), count(after), count(before)
         rows.append((f["path"], f["role"], r, a, b, len(after) < len(patch)))
         for bucket in (tot, by_role[f["role"]]):
@@ -246,7 +248,7 @@ def run(args: argparse.Namespace) -> None:
     t, src = sig["test"], sig["source"]
     print("\n  >> An INTELLIGENT shrink protects TEST signal first: TEST kept% "
           "should be >= SOURCE kept%,")
-    print("     and ideally >= the BEFORE baseline. Today (dumb per-file cap):")
+    print("     and ideally >= the BEFORE baseline:")
     print(f"       test kept   = {ret(t['after'], t['raw'])}  "
           f"(baseline {ret(t['before'], t['raw'])})")
     print(f"       source kept = {ret(src['after'], src['raw'])}  "
@@ -267,8 +269,11 @@ def emit_samples(files, coverage, count) -> None:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    def _cap(role: str) -> int:
+        return m._test_max_chars(_MAX_CHARS) if role == "test" else _MAX_CHARS
+
     biggest = max(files, key=lambda f: len(f["patch"]))
-    comp = m._sanitize_diff(biggest["patch"], max_chars=_MAX_CHARS)
+    comp = m._sanitize_diff(biggest["patch"], max_chars=_cap(biggest["role"]))
     sample = out / "compressed_sample.txt"
     sample.write_text(
         f"# FILE: {biggest['path']}\n"
@@ -304,11 +309,11 @@ def emit_samples(files, coverage, count) -> None:
     parts = ["## Coverage Summary", *cov_lines, "", "## Source File Changes", ""]
     if src:
         parts.append(f"### {src['path']}\n```diff\n"
-                     f"{m._sanitize_diff(src['patch'])}\n```\n")
+                     f"{m._sanitize_diff(src['patch'], max_chars=_cap('source'))}\n```\n")
     parts += ["## Test File Changes", ""]
     if tst:
         parts.append(f"### {tst['path']}\n```diff\n"
-                     f"{m._sanitize_diff(tst['patch'])}\n```\n")
+                     f"{m._sanitize_diff(tst['patch'], max_chars=_cap('test'))}\n```\n")
     user = "\n".join(parts)
     (out / "eval_prompt.txt").write_text(
         f"===SYSTEM===\n{sys_prompt}\n\n===USER===\n{user}"

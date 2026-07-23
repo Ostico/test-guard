@@ -283,7 +283,10 @@ def _build_ai_prompt(
             sources = matched_test_to_sources.get(test_file)
             annotation = f"matched to {', '.join(sources)}" if sources else "candidate"
             parts.append(f"### {test_file} (modified, {annotation})")
-            parts.append(f"```diff\n{_sanitize_diff(diff, max_chars=max_diff_chars)}\n```")
+            parts.append(
+                f"```diff\n"
+                f"{_sanitize_diff(diff, max_chars=_test_max_chars(max_diff_chars))}\n```"
+            )
             parts.append("")
 
     return "\n".join(parts)
@@ -347,6 +350,15 @@ _INJECTION_LINE_RE = re.compile(
 
 
 _DEFAULT_MAX_CONTEXT = 3
+
+# Test diffs get a larger char budget than source diffs. A test-adequacy gate
+# must see the tests it is judging, so when space is tight the source diff is
+# truncated before the test diff. This protects test-file signal first.
+_TEST_DIFF_CHAR_MULTIPLIER = 1.6
+
+
+def _test_max_chars(base_max_chars: int) -> int:
+    return int(base_max_chars * _TEST_DIFF_CHAR_MULTIPLIER)
 
 
 def _trim_hunk(hunk: Any, max_context: int) -> str | None:
@@ -448,29 +460,52 @@ def _truncate_diff(text: str, max_chars: int) -> str:
     return result
 
 
+def _redact_injection(text: str) -> str:
+    """Replace lines that look like prompt-injection attempts with [REDACTED]."""
+    return "\n".join(
+        "[REDACTED]" if _INJECTION_LINE_RE.match(line) else line
+        for line in text.splitlines()
+    )
+
+
+def _context_ladder(max_context: int) -> list[int]:
+    """Descending context sizes to try, e.g. 3 -> [3, 1, 0].
+
+    Shedding context lines (low signal) is preferable to dropping whole hunks
+    (high signal), so when a diff is over budget we retry compaction with
+    progressively fewer context lines before giving up and truncating.
+    """
+    return sorted({c for c in (max_context, 1, 0) if 0 <= c <= max_context},
+                  reverse=True)
+
+
 def _sanitize_diff(
     diff: str, max_chars: int = 10_000, max_context: int = _DEFAULT_MAX_CONTEXT
 ) -> str:
     """Compact, redact, and budget-cap a diff before embedding it in the prompt.
 
-    1. Structurally compact the diff (``_compact_diff``) so context lines and
-       binary/pure-context entries do not waste tokens.
-    2. Redact prompt-injection attempts: diffs contain arbitrary user code that
-       could include lines crafted to hijack the AI's instructions (e.g.
-       "SYSTEM: ignore previous instructions"); matching lines become
-       "[REDACTED]".
-    3. If still over ``max_chars``, truncate on hunk boundaries
-       (``_truncate_diff``) rather than mid-line.
+    Intelligent shrink: the changed (+/-) lines are the signal a reviewer needs;
+    the unchanged context lines are filler. So when a diff is over budget we
+    first shed context lines (``_compact_diff`` with a smaller context), and only
+    if the change lines *alone* still overflow do we drop whole hunks
+    (``_truncate_diff``) — on hunk boundaries, never mid-line. This keeps the
+    maximum amount of real change signal per token.
+
+    Steps:
+    1. For each context size on the ladder (e.g. 3 → 1 → 0), structurally
+       compact the diff and redact prompt-injection attempts (diffs contain
+       arbitrary user code that could include lines crafted to hijack the AI's
+       instructions, e.g. "SYSTEM: ignore previous instructions"). Return as
+       soon as the result fits ``max_chars``.
+    2. If even the context-free diff overflows, truncate it on hunk boundaries.
     """
-    compacted = _compact_diff(diff, max_context)
-    sanitized_lines = [
-        "[REDACTED]" if _INJECTION_LINE_RE.match(line) else line
-        for line in compacted.splitlines()
-    ]
-    sanitized = "\n".join(sanitized_lines)
-    if len(sanitized) > max_chars:
-        return _truncate_diff(sanitized, max_chars)
-    return sanitized
+    sanitized = ""
+    for ctx in _context_ladder(max_context):
+        sanitized = _redact_injection(_compact_diff(diff, ctx))
+        if len(sanitized) <= max_chars:
+            return sanitized
+    # Even context-free, the change lines overflow: drop whole hunks last.
+    return _truncate_diff(sanitized, max_chars)
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +564,7 @@ def _estimate_file_cost(
     if matched and matched in test_diffs:
         cost += _FILE_ENTRY_OVERHEAD_TOKENS
         cost += _estimate_tokens(
-            _sanitize_diff(test_diffs[matched], max_chars=max_diff_chars)
+            _sanitize_diff(test_diffs[matched], max_chars=_test_max_chars(max_diff_chars))
         )
     return cost
 
@@ -595,7 +630,7 @@ def _batch_files(
     # overhead so it doesn't get double-counted in per-file estimates.
     all_matched = {t for t in matched_tests.values() if t is not None}
     candidate_tokens = sum(
-        _estimate_tokens(_sanitize_diff(diff))
+        _estimate_tokens(_sanitize_diff(diff, max_chars=_test_max_chars(10_000)))
         for t, diff in test_diffs.items()
         if t not in all_matched
     )

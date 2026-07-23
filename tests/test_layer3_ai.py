@@ -14,6 +14,7 @@ from src.layer3_ai import (
     _call_ai_for_batch,
     _call_github_models,
     _compact_diff,
+    _context_ladder,
     _estimate_file_cost,
     _estimate_tokens,
     _filter_test_diffs_for_batch,
@@ -22,6 +23,7 @@ from src.layer3_ai import (
     _parse_ai_response,
     _resolve_models,
     _sanitize_diff,
+    _test_max_chars,
     _truncate_diff,
     _validate_batch_verdicts,
     compute_test_relevance,
@@ -148,6 +150,53 @@ class TestTruncateDiff:
         diff = self._hunk(1, 50)
         result = _truncate_diff(diff, max_chars=20)
         assert result == diff[:20] + "...[truncated]"
+
+
+class TestIntelligentShrink:
+    def test_context_ladder_descends_and_dedupes(self):
+        assert _context_ladder(3) == [3, 1, 0]
+        assert _context_ladder(1) == [1, 0]
+        assert _context_ladder(0) == [0]
+
+    def test_test_max_chars_is_larger_than_source(self):
+        assert _test_max_chars(10_000) > 10_000
+        assert _test_max_chars(10_000) == int(10_000 * 1.6)
+
+    def _hunk_with_fat_context(self) -> str:
+        # 3 context lines each side of a 1-line change; context lines are big.
+        fat = "x" * 400
+        ctx = "".join(f" {fat}\n" for _ in range(3))
+        # source_len = 3 ctx + 1 removed = 4; target_len = 3 ctx + 1 added = 4
+        return f"@@ -1,4 +1,4 @@\n{ctx}-old\n+new\n{ctx}"
+
+    def test_sheds_context_before_dropping_change_lines(self):
+        diff = self._hunk_with_fat_context()  # ~2.5 KB, dominated by context
+        # Budget too small for full 3-context, but the change lines fit easily.
+        result = _sanitize_diff(diff, max_chars=1000, max_context=3)
+        # Change signal is preserved and no whole hunk was dropped.
+        assert "-old" in result
+        assert "+new" in result
+        assert "truncated" not in result
+        # Fewer context lines than the original (context was shed to fit).
+        assert result.count("x" * 400) < 6
+
+    def test_change_lines_survive_when_only_context_free_fits(self):
+        diff = self._hunk_with_fat_context()
+        # Budget fits only the change lines (no context at all).
+        result = _sanitize_diff(diff, max_chars=60, max_context=3)
+        assert "-old" in result and "+new" in result
+        assert ("x" * 400) not in result  # all fat context shed
+
+    def test_test_cap_keeps_more_than_source_cap(self):
+        # A diff that overflows the source cap but fits the (larger) test cap
+        # keeps more content under the test cap.
+        big = "".join(
+            f"@@ -{i},1 +{i},1 @@\n-old{i}\n+new{i}\n" for i in range(1, 400)
+        )
+        base = 4000
+        at_source = _sanitize_diff(big, max_chars=base)
+        at_test = _sanitize_diff(big, max_chars=_test_max_chars(base))
+        assert len(at_test) > len(at_source)
 
 
 class TestParseAiResponse:
