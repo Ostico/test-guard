@@ -15,7 +15,9 @@ from src.layer3_ai import (
     _call_github_models,
     _compact_diff,
     _context_ladder,
+    _count_change_hunks,
     _estimate_file_cost,
+    _evidence_warning,
     _estimate_tokens,
     _filter_test_diffs_for_batch,
     _is_model_forbidden,
@@ -186,6 +188,54 @@ class TestIntelligentShrink:
         result = _sanitize_diff(diff, max_chars=60, max_context=3)
         assert "-old" in result and "+new" in result
         assert ("x" * 400) not in result  # all fat context shed
+
+    def test_truncation_keeps_signal_hunk_over_boilerplate(self):
+        # Boilerplate hunk first, branch-bearing hunk later. Budget fits one.
+        boiler = "@@ -1,1 +1,3 @@\n ctxA\n+    $a = 1;\n+    $b = 2;\n"
+        branch = "@@ -50,1 +52,3 @@\n ctxB\n+    if (cond) {\n+    }\n"
+        diff = boiler + branch
+        # Budget for a single hunk (+ marker); priority must pick the branch one.
+        result = _truncate_diff(diff, max_chars=len(branch) + 55)
+        assert "if (cond)" in result       # high-signal hunk kept
+        assert "$a = 1" not in result       # boilerplate dropped despite order
+        assert "truncated 1 of 2 hunks" in result
+
+    def test_count_change_hunks_ignores_pure_context(self):
+        diff = "@@ -1,2 +1,2 @@\n a\n b\n@@ -9,1 +9,1 @@\n-x\n+y\n"
+        assert _count_change_hunks(diff) == 1  # only the second has +/- lines
+
+    def test_evidence_warning_empty_when_nothing_dropped(self):
+        assert _evidence_warning(3, 3, 5, 5) == ""
+
+    def test_evidence_warning_reports_omissions(self):
+        w = _evidence_warning(src_kept=4, src_total=6, test_kept=2, test_total=5)
+        assert "Evidence Completeness" in w
+        assert "source hunks shown 4/6" in w
+        assert "test hunks shown 2/5" in w
+        assert "60% of test hunks omitted" in w
+        assert "warning" in w  # instructs the model to hedge
+
+    def test_build_prompt_emits_evidence_banner_when_truncated(self):
+        import re
+
+        # Four change hunks that overflow a tight budget even context-free.
+        big = "".join(
+            f"@@ -{i*10},1 +{i*10},2 @@\n ctx{i}\n+{'x' * 40}\n" for i in range(1, 5)
+        )
+        prompt = _build_ai_prompt(
+            files_for_ai=["src/big.py"],
+            source_diffs={"src/big.py": big},
+            test_diffs={},
+            coverage_details=None,
+            coverage_threshold=80.0,
+            matched_tests={"src/big.py": None},
+            max_diff_chars=100,
+        )
+        assert "Evidence Completeness" in prompt
+        matched = re.search(r"source hunks shown (\d+)/(\d+)", prompt)
+        assert matched is not None
+        kept, total = int(matched.group(1)), int(matched.group(2))
+        assert kept < total  # some hunks were omitted and reported
 
     def test_context_free_hunk_stays_valid_diff(self):
         # Regression: context stripped to 0 makes the hunk begin with a change

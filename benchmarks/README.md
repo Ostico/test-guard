@@ -100,11 +100,11 @@ char-cut behaviour. To sanity-check against the *actual* historical code,
 
 **Signal retention** (the quality axis — % of changed +/- lines kept):
 
-| role | dumb (uniform cap) | intelligent shrink | old char-cut baseline |
-|------|-------------------|--------------------|-----------------------|
-| test | 64% | **92%** | 70% |
-| source | 68% | 73% | 70% |
-| `--assert-intelligent` gate | FAIL | **PASS** | — |
+| role | dumb (uniform cap) | intelligent shrink | + priority truncation | old char-cut baseline |
+|------|-------------------|--------------------|-----------------------|-----------------------|
+| test | 64% | 92% | **96%** | 70% |
+| source | 68% | 73% | **75%** | 70% |
+| `--assert-intelligent` gate | FAIL | PASS | **PASS** | — |
 
 The intelligent shrink (adaptive context ladder + larger test-file cap) lifts
 test-signal retention from 64% → 92% and flips the regression gate green,
@@ -115,7 +115,7 @@ while source is sacrificed first (as intended).
 | variant | total tokens | vs raw |
 |---------|-------------|--------|
 | RAW | 27,775 | — |
-| intelligent shrink (AFTER) | 22,000 | −20% |
+| intelligent shrink (AFTER) | 22,327 | −19% |
 | dumb char-cut (BEFORE) | 20,012 | −27% |
 
 The intelligent shrink spends a few more tokens than the dumb cap on purpose:
@@ -130,9 +130,15 @@ review confirmed the test methods are intact and behaviors identifiable. That
 same eval also caught a real bug — a context-free hunk could emit an invalid
 `@@ -None,...` header — now fixed and covered by a regression test.
 
-**Known limitation (open follow-ups).** With source sacrificed first, a large
-source change can still be truncated past a newly-introduced branch (the eval
-saw `updateSegments`'s new parameter hidden). Remaining work: (1) protect
-source hunks that introduce new branching/signatures, not just give tests more
-budget; (2) surface "% hunks truncated" as an explicit confidence input so a
-weak model lowers confidence instead of trusting a surviving docblock.
+**Follow-ups now implemented.** Both weaknesses the eval surfaced are addressed:
+1. **Priority truncation** — when hunks must be dropped, `_truncate_diff` keeps
+   those introducing signatures/branches (and the most changed lines) first and
+   sheds boilerplate, instead of dropping the tail. This lifts source retention
+   to 75% and test to 96%, and protects load-bearing method bodies like the
+   `updateSegments` branch the eval saw hidden.
+2. **Evidence-Completeness banner** — when any diff is truncated, the prompt
+   gets an explicit `## ⚠️ Evidence Completeness` header stating how many
+   source/test hunks are shown vs total and the % of test hunks omitted, and
+   instructs the model to treat omitted code as unknown and lower its
+   confidence rather than trust a surviving docstring. The system prompt
+   (`prompts/test_adequacy.txt`) documents the banner.

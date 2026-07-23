@@ -224,6 +224,32 @@ class Layer3Result:
         return Verdict.PASS
 
 
+def _evidence_warning(
+    src_kept: int, src_total: int, test_kept: int, test_total: int
+) -> str:
+    """A prompt banner stating how much diff evidence was omitted to fit the
+    size limit, so the model treats missing code as unknown (not tested/correct)
+    and lowers its confidence — instead of trusting a surviving docblock.
+
+    Returns "" when nothing was truncated.
+    """
+    src_drop = src_total - src_kept
+    test_drop = test_total - test_kept
+    if src_drop <= 0 and test_drop <= 0:
+        return ""
+    pct_test = round(100 * test_drop / test_total) if test_total else 0
+    return (
+        "## ⚠️ Evidence Completeness\n"
+        f"Some changed hunks were omitted to fit size limits — source hunks "
+        f"shown {src_kept}/{src_total}, test hunks shown {test_kept}/{test_total} "
+        f"({pct_test}% of test hunks omitted). Omitted code is NOT evidence: do "
+        f"not assume it is tested or correct, and do not rely on docstrings or "
+        f"comments as proof of behavior. Lower your confidence accordingly, and "
+        f"prefer a 'warning' verdict when omitted hunks could hide untested "
+        f"behavior."
+    )
+
+
 def _build_ai_prompt(
     files_for_ai: list[str],
     source_diffs: dict[str, str],
@@ -255,40 +281,54 @@ def _build_ai_prompt(
         if test is not None:
             matched_test_to_sources.setdefault(test, []).append(src)
 
-    parts: list[str] = ["## Coverage Summary", "Per-file changed-line coverage:"]
-
+    coverage_block: list[str] = [
+        "## Coverage Summary", "Per-file changed-line coverage:"
+    ]
     for src in files_for_ai:
         if coverage_details is not None and src in coverage_details:
             pct = coverage_details[src]
-            parts.append(
+            coverage_block.append(
                 f"- {src}: {pct:.0f}% of changed lines covered"
                 f" (threshold: {coverage_threshold:.0f}%)"
             )
         else:
-            parts.append(f"- {src}: no coverage data available")
-    parts.append("")
+            coverage_block.append(f"- {src}: no coverage data available")
+    coverage_block.append("")
 
-    parts.append("## Source File Changes (files needing AI review)")
-    parts.append("")
+    # Build source/test sections, tracking how many change-hunks survived the
+    # size cap vs. how many existed, so truncation can be surfaced explicitly.
+    src_kept = src_total = 0
+    source_section: list[str] = ["## Source File Changes (files needing AI review)", ""]
     for src in files_for_ai:
-        parts.append(f"### {src}")
+        source_section.append(f"### {src}")
         diff = source_diffs.get(src, "")
-        parts.append(f"```diff\n{_sanitize_diff(diff, max_chars=max_diff_chars)}\n```")
-        parts.append("")
+        sanitized = _sanitize_diff(diff, max_chars=max_diff_chars)
+        src_total += _count_change_hunks(diff)
+        src_kept += _count_change_hunks(sanitized)
+        source_section.append(f"```diff\n{sanitized}\n```")
+        source_section.append("")
 
+    test_kept = test_total = 0
+    test_section: list[str] = []
     if test_diffs:
-        parts.append("## Test File Changes (relevant to files above)")
-        parts.append("")
+        test_section += ["## Test File Changes (relevant to files above)", ""]
         for test_file, diff in test_diffs.items():
             sources = matched_test_to_sources.get(test_file)
             annotation = f"matched to {', '.join(sources)}" if sources else "candidate"
-            parts.append(f"### {test_file} (modified, {annotation})")
-            parts.append(
-                f"```diff\n"
-                f"{_sanitize_diff(diff, max_chars=_test_max_chars(max_diff_chars))}\n```"
-            )
-            parts.append("")
+            sanitized = _sanitize_diff(diff, max_chars=_test_max_chars(max_diff_chars))
+            test_total += _count_change_hunks(diff)
+            test_kept += _count_change_hunks(sanitized)
+            test_section.append(f"### {test_file} (modified, {annotation})")
+            test_section.append(f"```diff\n{sanitized}\n```")
+            test_section.append("")
 
+    parts = list(coverage_block)
+    warning = _evidence_warning(src_kept, src_total, test_kept, test_total)
+    if warning:
+        parts.append(warning)
+        parts.append("")
+    parts += source_section
+    parts += test_section
     return "\n".join(parts)
 
 
@@ -428,13 +468,56 @@ def _compact_diff(diff: str, max_context: int) -> str:
     return compacted if len(compacted) < len(diff) else diff
 
 
-def _truncate_diff(text: str, max_chars: int) -> str:
-    """Truncate an over-budget diff on hunk boundaries.
+# Added lines that introduce a signature, a type, or a control-flow branch are
+# the highest-value evidence in a diff — losing them to a size cut is what makes
+# a reviewer reason about code it cannot see. Boost hunks that contain them so
+# truncation sheds boilerplate first. Language-agnostic-ish across PHP/Py/JS/Go.
+_HIGH_SIGNAL_RE = re.compile(
+    r"^\+.*\b(function|def|func|fn|class|interface|trait|struct|enum|"
+    r"if|elif|elseif|else|switch|case|when|match|for|foreach|while|"
+    r"return|throw|raise|yield|catch)\b"
+)
 
-    Keeps whole hunks until the next one would exceed ``max_chars`` so the
-    result stays a well-formed unified diff instead of a half-line fragment,
-    and records how many hunks were dropped. Falls back to a hard character
-    cut only when the preamble plus first hunk already exceed the budget.
+
+def _count_change_lines(text: str) -> int:
+    return sum(
+        1 for ln in text.splitlines()
+        if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+    )
+
+
+def _count_change_hunks(diff: str) -> int:
+    """Number of hunks that contain at least one changed (+/-) line."""
+    count = 0
+    started = False
+    has_change = False
+    for ln in diff.splitlines():
+        if ln.startswith("@@"):
+            count += started and has_change
+            started, has_change = True, False
+        elif started and ln[:1] in "+-" and not ln.startswith(("+++", "---")):
+            has_change = True
+    return count + (started and has_change)
+
+
+def _hunk_priority(hunk: str) -> tuple[int, int]:
+    """Sort key (higher kept first): signature/branch hunks beat boilerplate,
+    then more changed lines beat fewer."""
+    has_signal = any(_HIGH_SIGNAL_RE.match(ln) for ln in hunk.splitlines())
+    return (1 if has_signal else 0, _count_change_lines(hunk))
+
+
+def _truncate_diff(text: str, max_chars: int) -> str:
+    """Truncate an over-budget diff on hunk boundaries, keeping the hunks that
+    carry the most signal.
+
+    Rather than keep a naive in-order prefix (which drops whatever lands at the
+    tail, often a load-bearing method body), select hunks by priority — those
+    introducing signatures/branches first, then those with the most changed
+    lines — until the budget is spent, then emit the kept hunks in their
+    original order so the result is still a well-formed unified diff. Records
+    how many hunks were dropped; falls back to a hard character cut only when
+    not even one hunk fits.
     """
     lines = text.splitlines(keepends=True)
     hunk_starts = [i for i, ln in enumerate(lines) if ln.startswith("@@")]
@@ -445,16 +528,20 @@ def _truncate_diff(text: str, max_chars: int) -> str:
     for pos, start in enumerate(hunk_starts):
         stop = hunk_starts[pos + 1] if pos + 1 < len(hunk_starts) else len(lines)
         hunks.append("".join(lines[start:stop]))
-    kept: list[str] = []
-    used = len(preamble)
     marker_reserve = 48  # room for the "...[truncated N of M hunks]" marker
-    for hunk in hunks:
-        if used + len(hunk) + marker_reserve > max_chars:
-            break
-        kept.append(hunk)
-        used += len(hunk)
-    if not kept:
+    budget = max_chars - len(preamble) - marker_reserve
+    # Choose which hunks to keep by priority, but remember their file order.
+    order = sorted(range(len(hunks)), key=lambda i: _hunk_priority(hunks[i]),
+                   reverse=True)
+    keep_idx: set[int] = set()
+    used = 0
+    for i in order:
+        if used + len(hunks[i]) <= budget:
+            keep_idx.add(i)
+            used += len(hunks[i])
+    if not keep_idx:
         return text[:max_chars] + "...[truncated]"
+    kept = [hunks[i] for i in sorted(keep_idx)]
     omitted = len(hunks) - len(kept)
     result = preamble + "".join(kept)
     if omitted:
