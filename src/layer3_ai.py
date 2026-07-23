@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import TypedDict, cast
+from typing import Any, TypedDict, cast
 
 from openai import APIStatusError, OpenAI
 from openai.types.chat import (
@@ -28,6 +28,8 @@ from openai.types.chat import (
 )
 from openai.types.shared_params import ResponseFormatJSONSchema
 from openai.types.shared_params.response_format_json_schema import JSONSchema
+from unidiff import PatchSet
+from unidiff.errors import UnidiffParseError
 
 from src.models import FileVerdict, LayerResult, Verdict
 
@@ -344,21 +346,130 @@ _INJECTION_LINE_RE = re.compile(
 )
 
 
-def _sanitize_diff(diff: str, max_chars: int = 10_000) -> str:
-    """Truncate a diff and redact prompt-injection attempts.
+_DEFAULT_MAX_CONTEXT = 3
 
-    Diffs contain arbitrary user code that could include lines crafted to
-    hijack the AI's instructions (e.g. "SYSTEM: ignore previous instructions").
-    Matching lines are replaced with "[REDACTED]" before the diff is embedded
-    in the prompt.
+
+def _trim_hunk(hunk: Any, max_context: int) -> str | None:
+    """Re-emit a single hunk keeping at most ``max_context`` unchanged lines
+    on each side of the changed lines, with a recomputed ``@@`` header.
+
+    Returns ``None`` for a hunk that contains no added/removed lines (pure
+    context carries no signal for the reviewer and can be dropped entirely).
     """
+    lines: list[Any] = list(hunk)
+    change_idx = [i for i, ln in enumerate(lines) if ln.is_added or ln.is_removed]
+    if not change_idx:
+        return None
+    start = max(0, change_idx[0] - max_context)
+    end = min(len(lines) - 1, change_idx[-1] + max_context)
+    kept = lines[start : end + 1]
+    if start == 0:
+        # No leading context dropped: original starts are still correct.
+        src_start, tgt_start = hunk.source_start, hunk.target_start
+    else:
+        # kept[0] precedes the first change, so it is a context line and
+        # carries both a source and a target line number.
+        src_start, tgt_start = kept[0].source_line_no, kept[0].target_line_no
+    src_len = sum(1 for ln in kept if not ln.is_added)
+    tgt_len = sum(1 for ln in kept if not ln.is_removed)
+    header = f"@@ -{src_start},{src_len} +{tgt_start},{tgt_len} @@\n"
+    body = "".join(str(ln) for ln in kept)
+    return header + body
+
+
+def _compact_diff(diff: str, max_context: int) -> str:
+    """Structurally shrink a unified diff before it is embedded in the prompt.
+
+    Parses the diff with ``unidiff`` and re-emits it with unchanged context
+    lines capped at ``max_context`` per side, dropping pure-context and binary
+    file entries. This targets the diff structure directly rather than blindly
+    cutting the string, which keeps whole hunks intact under the token budget.
+
+    GitHub's PR-files ``patch`` field omits the ``---``/``+++`` file header, so
+    a synthetic header is prepended before parsing and never emitted. The
+    original string is returned unchanged when the diff cannot be parsed or
+    when re-emission would not make it smaller, so callers never pay for a
+    no-op rewrite (e.g. GitHub's default 3-line context is already minimal).
+    """
+    if not diff.strip():
+        return diff
+    has_header = diff.lstrip().startswith(("--- ", "diff "))
+    text = diff if has_header else f"--- a/f\n+++ b/f\n{diff}"
+    try:
+        patch: Any = PatchSet(text)
+    except (UnidiffParseError, UnicodeDecodeError):
+        # Malformed diff: leave it to the char-budget fallback below.
+        return diff
+    rendered: list[str] = []
+    for pfile in patch:
+        if pfile.is_binary_file:
+            continue
+        for hunk in pfile:
+            trimmed = _trim_hunk(hunk, max_context)
+            if trimmed is not None:
+                rendered.append(trimmed)
+    if not rendered:
+        return diff
+    compacted = "".join(rendered)
+    return compacted if len(compacted) < len(diff) else diff
+
+
+def _truncate_diff(text: str, max_chars: int) -> str:
+    """Truncate an over-budget diff on hunk boundaries.
+
+    Keeps whole hunks until the next one would exceed ``max_chars`` so the
+    result stays a well-formed unified diff instead of a half-line fragment,
+    and records how many hunks were dropped. Falls back to a hard character
+    cut only when the preamble plus first hunk already exceed the budget.
+    """
+    lines = text.splitlines(keepends=True)
+    hunk_starts = [i for i, ln in enumerate(lines) if ln.startswith("@@")]
+    if not hunk_starts:
+        return text[:max_chars] + "...[truncated]"
+    preamble = "".join(lines[: hunk_starts[0]])
+    hunks: list[str] = []
+    for pos, start in enumerate(hunk_starts):
+        stop = hunk_starts[pos + 1] if pos + 1 < len(hunk_starts) else len(lines)
+        hunks.append("".join(lines[start:stop]))
+    kept: list[str] = []
+    used = len(preamble)
+    marker_reserve = 48  # room for the "...[truncated N of M hunks]" marker
+    for hunk in hunks:
+        if used + len(hunk) + marker_reserve > max_chars:
+            break
+        kept.append(hunk)
+        used += len(hunk)
+    if not kept:
+        return text[:max_chars] + "...[truncated]"
+    omitted = len(hunks) - len(kept)
+    result = preamble + "".join(kept)
+    if omitted:
+        result = result.rstrip("\n") + f"\n...[truncated {omitted} of {len(hunks)} hunks]"
+    return result
+
+
+def _sanitize_diff(
+    diff: str, max_chars: int = 10_000, max_context: int = _DEFAULT_MAX_CONTEXT
+) -> str:
+    """Compact, redact, and budget-cap a diff before embedding it in the prompt.
+
+    1. Structurally compact the diff (``_compact_diff``) so context lines and
+       binary/pure-context entries do not waste tokens.
+    2. Redact prompt-injection attempts: diffs contain arbitrary user code that
+       could include lines crafted to hijack the AI's instructions (e.g.
+       "SYSTEM: ignore previous instructions"); matching lines become
+       "[REDACTED]".
+    3. If still over ``max_chars``, truncate on hunk boundaries
+       (``_truncate_diff``) rather than mid-line.
+    """
+    compacted = _compact_diff(diff, max_context)
     sanitized_lines = [
         "[REDACTED]" if _INJECTION_LINE_RE.match(line) else line
-        for line in diff.splitlines()
+        for line in compacted.splitlines()
     ]
     sanitized = "\n".join(sanitized_lines)
     if len(sanitized) > max_chars:
-        return sanitized[:max_chars] + "...[truncated]"
+        return _truncate_diff(sanitized, max_chars)
     return sanitized
 
 

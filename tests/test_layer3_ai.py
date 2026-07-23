@@ -13,6 +13,7 @@ from src.layer3_ai import (
     _build_ai_prompt,
     _call_ai_for_batch,
     _call_github_models,
+    _compact_diff,
     _estimate_file_cost,
     _estimate_tokens,
     _filter_test_diffs_for_batch,
@@ -21,6 +22,7 @@ from src.layer3_ai import (
     _parse_ai_response,
     _resolve_models,
     _sanitize_diff,
+    _truncate_diff,
     _validate_batch_verdicts,
     compute_test_relevance,
     evaluate_file_shortcut,
@@ -40,6 +42,90 @@ class TestSanitizeDiff:
     def test_truncates_large_diff(self):
         result = _sanitize_diff("a" * 20, max_chars=10)
         assert result == ("a" * 10) + "...[truncated]"
+
+    def test_non_diff_text_is_left_unchanged(self):
+        # Plain non-diff text has no hunks to parse; compaction is a no-op.
+        assert _sanitize_diff("hello world") == "hello world"
+
+    def test_github_patch_without_header_is_parseable(self):
+        # GitHub's PR-files patch field omits the ---/+++ header.
+        patch = "@@ -1,3 +1,4 @@\n ctx1\n-old\n+new\n+add\n ctx2\n"
+        result = _sanitize_diff(patch)
+        # 3-line context already minimal → unchanged content preserved.
+        assert "-old" in result
+        assert "+new" in result
+        assert "+add" in result
+
+
+class TestCompactDiff:
+    def _make_patch_with_context(self, n_ctx: int) -> str:
+        ctx = "".join(f" line{i}\n" for i in range(1, n_ctx + 1))
+        # source_len = n_ctx context + 1 removed; target_len = n_ctx + 1 added
+        length = n_ctx + 1
+        return f"@@ -1,{length} +1,{length} @@\n{ctx}-old\n+new\n"
+
+    def test_trims_excess_context_lines(self):
+        patch = self._make_patch_with_context(6)  # 6 context lines before change
+        result = _compact_diff(patch, max_context=3)
+        # Far context dropped, near context kept.
+        assert "line1" not in result
+        assert "line2" not in result
+        assert "line3" not in result
+        assert "line4" in result
+        assert "line6" in result
+        assert "-old" in result and "+new" in result
+
+    def test_trimmed_output_is_a_valid_unified_diff(self):
+        from unidiff import PatchSet
+
+        patch = self._make_patch_with_context(8)
+        result = _compact_diff(patch, max_context=2)
+        # Re-parsing with a synthetic header must succeed (counts are correct).
+        parsed = PatchSet(f"--- a/f\n+++ b/f\n{result}")
+        assert len(parsed) == 1
+        hunk = parsed[0][0]
+        # 2 context + 1 removed on source side; 2 + 1 added on target side.
+        assert hunk.source_length == 3
+        assert hunk.target_length == 3
+
+    def test_default_github_context_is_noop(self):
+        patch = self._make_patch_with_context(3)  # already 3-line context
+        assert _compact_diff(patch, max_context=3) == patch
+
+    def test_malformed_diff_returned_unchanged(self):
+        garbage = "@@ this is not a real hunk @@\nrandom stuff\n"
+        assert _compact_diff(garbage, max_context=3) == garbage
+
+    def test_empty_diff_returned_unchanged(self):
+        assert _compact_diff("", max_context=3) == ""
+
+
+class TestTruncateDiff:
+    def _hunk(self, start: int, body_lines: int) -> str:
+        body = "".join(f" ctx{i}\n" for i in range(body_lines))
+        return f"@@ -{start},{body_lines} +{start},{body_lines} @@\n{body}"
+
+    def test_keeps_whole_hunks_and_reports_omissions(self):
+        h1 = self._hunk(1, 5)
+        h2 = self._hunk(100, 5)
+        h3 = self._hunk(200, 5)
+        diff = h1 + h2 + h3
+        # Budget fits one hunk plus marker but not all three.
+        result = _truncate_diff(diff, max_chars=len(h1) + 60)
+        assert result.startswith("@@ -1,5")
+        assert "@@ -200" not in result  # later hunks dropped whole
+        assert "truncated" in result
+        assert "hunks]" in result
+        # No mid-line fragment: every non-marker line is a complete diff line.
+        for line in result.splitlines():
+            if line.startswith("...["):
+                continue
+            assert line.startswith(("@@", " ", "+", "-"))
+
+    def test_falls_back_to_char_cut_when_first_hunk_too_big(self):
+        diff = self._hunk(1, 50)
+        result = _truncate_diff(diff, max_chars=20)
+        assert result == diff[:20] + "...[truncated]"
 
 
 class TestParseAiResponse:
