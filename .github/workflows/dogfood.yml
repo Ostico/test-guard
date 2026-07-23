@@ -36,4 +36,4 @@ jobs:
         with:
           coverage-file: coverage.xml
           coverage-threshold: '100'
-          ai-model: 'openai/gpt-4.1-nano'
+          ai-model: 'openai/gpt-4.1-mini'
