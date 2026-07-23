@@ -27,6 +27,10 @@ class FileVerdict:
     reason: str
     layer: str
     matched_test: str | None = None
+    # All test files matched to this source (a class/module can have several:
+    # unit + integration + e2e). matched_test stays the canonical one for
+    # reporting; matched_tests carries the full set for batching.
+    matched_tests: tuple[str, ...] = ()
 
 
 @dataclass

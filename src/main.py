@@ -118,9 +118,13 @@ def run_pipeline(config: Config) -> Report:
         elif _matches_source_pattern(filepath, config.test_patterns):
             source_diffs[filepath] = diff
 
-    # Extract matched-test mappings from L2 verdicts for L3 to use in test relevance computation.
-    l2_matched_tests: dict[str, str | None] = {
-        fv.file: fv.matched_test for fv in l2.file_verdicts
+    # Extract matched-test mappings from L2 verdicts for L3 to use in test
+    # relevance computation. A source can match several test files (unit +
+    # integration + …), so pass the full list; fall back to the canonical one.
+    l2_matched_tests: dict[str, list[str]] = {
+        fv.file: (list(fv.matched_tests)
+                  or ([fv.matched_test] if fv.matched_test else []))
+        for fv in l2.file_verdicts
     }
 
     l3 = run_layer3(

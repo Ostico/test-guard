@@ -47,10 +47,20 @@ class Relevance(Enum):
     UNKNOWN = "unknown"
 
 
+def _as_test_list(matched: str | list[str] | tuple[str, ...] | None) -> list[str]:
+    """Normalize a matched-test value to a list. Accepts the legacy single-str
+    form and the multi-test list/tuple form so both callers work."""
+    if matched is None:
+        return []
+    if isinstance(matched, str):
+        return [matched]
+    return list(matched)
+
+
 def compute_test_relevance(
     source_file: str,
     changed_test_files: list[str],
-    l2_matched_test: str | None,
+    l2_matched_test: str | list[str] | None,
     test_diffs: dict[str, str],
 ) -> Relevance:
     """Determine whether any changed test file is relevant to this source file.
@@ -78,9 +88,10 @@ def compute_test_relevance(
         return Relevance.NO
 
     source_stem = PurePosixPath(source_file).stem.lower()
+    matched_list = _as_test_list(l2_matched_test)
 
     for test_file in changed_test_files:
-        if l2_matched_test is not None and test_file == l2_matched_test:
+        if test_file in matched_list:
             # Strategy 1: L2 already did the hard work of matching.
             return Relevance.YES
         if source_stem in PurePosixPath(test_file).stem.lower():
@@ -256,7 +267,7 @@ def _build_ai_prompt(
     test_diffs: dict[str, str],
     coverage_details: dict[str, float] | None,
     coverage_threshold: float,
-    matched_tests: dict[str, str | None],
+    matched_tests: dict[str, str | list[str] | None],
     max_diff_chars: int = 10_000,
 ) -> str:
     """Build the structured Markdown user prompt for the AI batch.
@@ -278,8 +289,8 @@ def _build_ai_prompt(
     # source files a given test is authoritative for.
     matched_test_to_sources: dict[str, list[str]] = {}
     for src, test in matched_tests.items():
-        if test is not None:
-            matched_test_to_sources.setdefault(test, []).append(src)
+        for t in _as_test_list(test):
+            matched_test_to_sources.setdefault(t, []).append(src)
 
     coverage_block: list[str] = [
         "## Coverage Summary", "Per-file changed-line coverage:"
@@ -652,7 +663,7 @@ def _estimate_file_cost(
     src: str,
     source_diffs: dict[str, str],
     test_diffs: dict[str, str],
-    matched_tests: dict[str, str | None],
+    matched_tests: dict[str, str | list[str] | None],
     max_diff_chars: int = 10_000,
 ) -> int:
     """Estimate token cost of including one source file in a batch.
@@ -666,19 +677,19 @@ def _estimate_file_cost(
     cost = _FILE_ENTRY_OVERHEAD_TOKENS
     diff = source_diffs.get(src, "")
     cost += _estimate_tokens(_sanitize_diff(diff, max_chars=max_diff_chars))
-    matched = matched_tests.get(src)
-    if matched and matched in test_diffs:
-        cost += _FILE_ENTRY_OVERHEAD_TOKENS
-        cost += _estimate_tokens(
-            _sanitize_diff(test_diffs[matched], max_chars=_test_max_chars(max_diff_chars))
-        )
+    for matched in _as_test_list(matched_tests.get(src)):
+        if matched in test_diffs:
+            cost += _FILE_ENTRY_OVERHEAD_TOKENS
+            cost += _estimate_tokens(
+                _sanitize_diff(test_diffs[matched], max_chars=_test_max_chars(max_diff_chars))
+            )
     return cost
 
 
 def _filter_test_diffs_for_batch(
     batch_files: list[str],
     test_diffs: dict[str, str],
-    matched_tests: dict[str, str | None],
+    matched_tests: dict[str, str | list[str] | None],
 ) -> dict[str, str]:
     """Filter test diffs to those relevant to a batch.
 
@@ -698,16 +709,16 @@ def _filter_test_diffs_for_batch(
     relevant: set[str] = set()
     # Test files matched to a source *in this batch* travel with that source.
     for src in batch_files:
-        matched = matched_tests.get(src)
-        if matched and matched in test_diffs:
-            relevant.add(matched)
+        for matched in _as_test_list(matched_tests.get(src)):
+            if matched in test_diffs:
+                relevant.add(matched)
     # Only test files matched to *no* source anywhere are true candidates that
     # ride every batch. A test matched to a source in a different batch is NOT
     # re-added here — it travels with its own source. (This reverses the earlier
     # "BUG 4" behavior of attaching every out-of-batch matched test to every
     # batch, which inflated every prompt with the whole test payload and blew
     # the model's input-token cap.)
-    globally_matched = {t for t in matched_tests.values() if t is not None}
+    globally_matched = {t for v in matched_tests.values() for t in _as_test_list(v)}
     for test_file in test_diffs:
         if test_file not in globally_matched:
             relevant.add(test_file)
@@ -718,7 +729,7 @@ def _batch_files(
     files_for_ai: list[str],
     source_diffs: dict[str, str],
     test_diffs: dict[str, str],
-    matched_tests: dict[str, str | None],
+    matched_tests: dict[str, str | list[str] | None],
     token_budget: int = _USER_PROMPT_TOKEN_BUDGET,
 ) -> list[list[str]]:
     """Greedily pack files into batches that fit within the token budget.
@@ -738,7 +749,7 @@ def _batch_files(
 
     # Candidate tests go in every batch — charge their token cost as a fixed
     # overhead so it doesn't get double-counted in per-file estimates.
-    all_matched = {t for t in matched_tests.values() if t is not None}
+    all_matched = {t for v in matched_tests.values() for t in _as_test_list(v)}
     candidate_tokens = sum(
         _estimate_tokens(_sanitize_diff(diff, max_chars=_test_max_chars(10_000)))
         for t, diff in test_diffs.items()
@@ -820,7 +831,7 @@ def _call_ai_for_batch(
     test_diffs: dict[str, str],
     coverage_details: dict[str, float] | None,
     coverage_threshold: float,
-    matched_tests: dict[str, str | None],
+    matched_tests: dict[str, str | list[str] | None],
     model: str,
     system_prompt: str,
     token: str,
@@ -931,7 +942,7 @@ def run_layer3(
     source_diffs: dict[str, str],
     deleted_files: set[str],
     test_diffs: dict[str, str],
-    l2_matched_tests: dict[str, str | None],
+    l2_matched_tests: dict[str, str | list[str] | None],
     coverage_details: dict[str, float] | None,
     coverage_threshold: float,
     model: str,

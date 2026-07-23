@@ -1310,6 +1310,21 @@ class TestFilterTestDiffsForBatch:
         )
         assert "tests/test_a.py" in result
 
+    def test_multiple_matched_tests_for_one_source_all_included(self):
+        # A source with unit + integration tests — both travel with its batch.
+        result = _filter_test_diffs_for_batch(
+            batch_files=["src/foo.py"],
+            test_diffs={
+                "tests/test_foo.py": "d1",
+                "tests/test_foo_integration.py": "d2",
+            },
+            matched_tests={
+                "src/foo.py": ["tests/test_foo.py", "tests/test_foo_integration.py"],
+            },
+        )
+        assert "tests/test_foo.py" in result
+        assert "tests/test_foo_integration.py" in result
+
     def test_matched_test_outside_batch_excluded(self):
         # A test matched to a source in ANOTHER batch travels with its own
         # source, not this one (reverses the old "BUG 4" every-batch behavior
