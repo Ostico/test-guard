@@ -18,8 +18,11 @@ inputs:
     description: 'Source→test file mapping. "auto" detects from project structure, or a JSON object of {id: {src_pattern, test_template}} merged onto the defaults.'
     default: 'auto'
   exclude-patterns:
-    description: 'Comma-separated glob patterns to exclude from analysis.'
+    description: 'Comma-separated glob patterns to exclude from analysis. Full override of the built-in defaults — set this to remove or replace a default.'
     default: '*.json,*.yml,*.yaml,*.md,*.txt,*.lock,*.toml,*.cfg,*.ini,*.sql,migrations/**,docs/**,*.config.js,*.config.ts,*.config.mjs,*.config.cjs,Gruntfile.js,Gulpfile.js,conftest.py,setup.py,manage.py,noxfile.py,fabfile.py,build.rs'
+  extra-exclude-patterns:
+    description: 'Comma-separated glob patterns to exclude IN ADDITION to exclude-patterns (unioned, not overriding). Use this to add repo-specific excludes (e.g. benchmarks/**) without re-listing the defaults.'
+    default: ''
   ai-enabled:
     description: 'Enable AI Layer 3 analysis (true/false).'
     default: 'true'
@@ -50,6 +53,7 @@ runs:
         INPUT_COVERAGE-THRESHOLD: ${{ inputs.coverage-threshold }}
         INPUT_TEST-PATTERNS: ${{ inputs.test-patterns }}
         INPUT_EXCLUDE-PATTERNS: ${{ inputs.exclude-patterns }}
+        INPUT_EXTRA-EXCLUDE-PATTERNS: ${{ inputs.extra-exclude-patterns }}
         INPUT_AI-ENABLED: ${{ inputs.ai-enabled }}
         INPUT_AI-MODEL: ${{ inputs.ai-model }}
         INPUT_AI-CONFIDENCE-THRESHOLD: ${{ inputs.ai-confidence-threshold }}

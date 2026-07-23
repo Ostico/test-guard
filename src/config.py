@@ -114,15 +114,15 @@ def _env(name: str, default: str) -> str: ...
 def _env(name: str, default: None = None) -> str | None: ...
 def _env(name: str, default: str | None = None) -> str | None:
     """Read a GitHub Actions input or regular env var.
-    
+
     GitHub Actions passes workflow inputs as INPUT_<NAME> env vars (uppercased).
     This function checks INPUT_<NAME> first (GitHub Actions convention), then falls
     back to plain <NAME> (for local testing), then to the provided default.
-    
+
     Args:
         name: Variable name (e.g., "COVERAGE-FILE" → checks INPUT_COVERAGE_FILE first).
         default: Default value if not found in environment.
-    
+
     Returns:
         The env var value, or default if not found.
     """
@@ -131,13 +131,13 @@ def _env(name: str, default: str | None = None) -> str | None:
 
 def _env_required(name: str) -> str:
     """Read a required env var; raise ValueError if not set.
-    
+
     Args:
         name: Environment variable name (plain, not INPUT_-prefixed).
-    
+
     Returns:
         The env var value.
-    
+
     Raises:
         ValueError: If the variable is not set.
     """
@@ -150,7 +150,7 @@ def _env_required(name: str) -> str:
 @dataclass(frozen=True)
 class Config:
     """Parsed and validated configuration from GitHub Actions inputs.
-    
+
     Attributes:
         github_token: GitHub API token for PR comments and status checks.
         repo: Repository in "owner/repo" format.
@@ -247,14 +247,14 @@ def _parse_custom_test_patterns(raw: str) -> dict[str, dict[str, str]]:
 
 def parse_config() -> Config:
     """Parse and validate configuration from GitHub Actions environment variables.
-    
+
     Reads GitHub context (GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_REF) and
     workflow inputs (INPUT_COVERAGE_FILE, INPUT_AI_ENABLED, etc.), validates
     ranges and types, and returns a Config object.
-    
+
     Returns:
         Config: Validated configuration object.
-    
+
     Raises:
         ValueError: If required vars are missing or values are out of range.
     """
@@ -281,8 +281,18 @@ def parse_config() -> Config:
         raise ValueError(f"coverage-threshold must be 0-100, got: {coverage_threshold}")
 
     # Layer 2: Parse exclude patterns and test patterns.
+    # `exclude-patterns` is a full override of the built-in defaults (set it to
+    # drop or replace a default). `extra-exclude-patterns` is UNIONED on top of
+    # whatever the base resolves to, so a repo can add its own excludes (e.g.
+    # `benchmarks/**`) without re-listing the whole default set. Union — not
+    # override — mirrors how `test-patterns` merges onto the defaults, and keeps
+    # the base override as the escape hatch for un-excluding a default.
     exclude_raw = _env("EXCLUDE-PATTERNS", _DEFAULT_EXCLUDE)
-    exclude_patterns = [p.strip() for p in exclude_raw.split(",") if p.strip()]
+    extra_raw = _env("EXTRA-EXCLUDE-PATTERNS", "")
+    base_excludes = [p.strip() for p in exclude_raw.split(",") if p.strip()]
+    extra_excludes = [p.strip() for p in extra_raw.split(",") if p.strip()]
+    # dict.fromkeys keeps base-then-extra order while de-duplicating.
+    exclude_patterns = list(dict.fromkeys(base_excludes + extra_excludes))
 
     test_patterns_raw = _env("TEST-PATTERNS", "auto")
     if test_patterns_raw == "auto":

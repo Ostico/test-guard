@@ -16,6 +16,7 @@ import traceback
 import requests
 
 from src.config import Config, parse_config
+from src.diff_utils import is_trivial_diff
 from src.github_api import GITHUB_API_URL, create_session, get_json, get_paginated
 from src.github_client import format_report, report_to_github
 from src.layer1_coverage import run_layer1
@@ -30,7 +31,7 @@ def _get_pr_context(
     session: requests.Session,
 ) -> tuple[list[str], list[str], str, dict[str, str], set[str]]:
     """Fetch PR context from GitHub API.
-    
+
     Returns a 5-tuple: (changed_files, all_repo_files, head_sha, file_diffs, deleted_files).
     - changed_files: List of modified/added files in the PR.
     - all_repo_files: All files in the repo (for test file lookup).
@@ -80,7 +81,13 @@ def run_pipeline(config: Config) -> Report:
         and not _is_test_file(f, config.test_patterns)
         and _matches_source_pattern(f, config.test_patterns)
     ]
-    l1 = run_layer1(config.coverage_files, config.coverage_threshold, l1_files)
+    # Source files whose changed lines are all trivial (whitespace/comments)
+    # have nothing to cover; tell Layer 1 so it doesn't FAIL them as
+    # "not in coverage report" (they never appear in diff-cover's src_stats).
+    trivial_files = {f for f in l1_files if f in file_diffs and is_trivial_diff(file_diffs[f])}
+    l1 = run_layer1(
+        config.coverage_files, config.coverage_threshold, l1_files, trivial_files
+    )
     report.layers.append(l1)
     if l1.short_circuit:
         report_to_github(report, config.github_token, config.repo, config.pr_number, head_sha)
@@ -118,9 +125,13 @@ def run_pipeline(config: Config) -> Report:
         elif _matches_source_pattern(filepath, config.test_patterns):
             source_diffs[filepath] = diff
 
-    # Extract matched-test mappings from L2 verdicts for L3 to use in test relevance computation.
-    l2_matched_tests: dict[str, str | None] = {
-        fv.file: fv.matched_test for fv in l2.file_verdicts
+    # Extract matched-test mappings from L2 verdicts for L3 to use in test
+    # relevance computation. A source can match several test files (unit +
+    # integration + …), so pass the full list; fall back to the canonical one.
+    l2_matched_tests: dict[str, list[str]] = {
+        fv.file: (list(fv.matched_tests)
+                  or ([fv.matched_test] if fv.matched_test else []))
+        for fv in l2.file_verdicts
     }
 
     l3 = run_layer3(

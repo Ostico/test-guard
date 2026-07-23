@@ -48,6 +48,53 @@ class TestParseConfig:
         assert cfg.ai_confidence_threshold == 0.9
         assert cfg.exclude_patterns == ["*.md", "docs/**"]
 
+    def _base_env(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.delenv("INPUT_EXCLUDE-PATTERNS", raising=False)
+        monkeypatch.delenv("INPUT_EXTRA-EXCLUDE-PATTERNS", raising=False)
+
+    def test_extra_exclude_unions_with_defaults(self, monkeypatch):
+        """extra-exclude-patterns adds to the defaults without re-listing them."""
+        from src.config import _DEFAULT_EXCLUDE
+
+        self._base_env(monkeypatch)
+        monkeypatch.setenv("INPUT_EXTRA-EXCLUDE-PATTERNS", "benchmarks/**")
+
+        cfg = parse_config()
+        defaults = [p.strip() for p in _DEFAULT_EXCLUDE.split(",") if p.strip()]
+        # Every default is still present, plus the extra pattern, once.
+        assert set(defaults).issubset(set(cfg.exclude_patterns))
+        assert "benchmarks/**" in cfg.exclude_patterns
+        assert cfg.exclude_patterns == [*defaults, "benchmarks/**"]
+
+    def test_extra_exclude_unions_onto_override(self, monkeypatch):
+        """extra is unioned onto a full override, not the defaults."""
+        self._base_env(monkeypatch)
+        monkeypatch.setenv("INPUT_EXCLUDE-PATTERNS", "*.md,docs/**")
+        monkeypatch.setenv("INPUT_EXTRA-EXCLUDE-PATTERNS", "benchmarks/**,*.tmp")
+
+        cfg = parse_config()
+        assert cfg.exclude_patterns == ["*.md", "docs/**", "benchmarks/**", "*.tmp"]
+
+    def test_extra_exclude_dedups_overlap(self, monkeypatch):
+        """A pattern already in the base is not duplicated by extra."""
+        self._base_env(monkeypatch)
+        monkeypatch.setenv("INPUT_EXCLUDE-PATTERNS", "*.md,docs/**")
+        monkeypatch.setenv("INPUT_EXTRA-EXCLUDE-PATTERNS", "docs/**,benchmarks/**")
+
+        cfg = parse_config()
+        assert cfg.exclude_patterns == ["*.md", "docs/**", "benchmarks/**"]
+
+    def test_extra_exclude_empty_is_noop(self, monkeypatch):
+        """Unset/empty extra leaves the base untouched (backward compatible)."""
+        self._base_env(monkeypatch)
+        monkeypatch.setenv("INPUT_EXCLUDE-PATTERNS", "*.md,docs/**")
+
+        cfg = parse_config()
+        assert cfg.exclude_patterns == ["*.md", "docs/**"]
+
     def test_missing_github_token_raises(self, monkeypatch):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")

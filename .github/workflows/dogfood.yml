@@ -36,4 +36,9 @@ jobs:
         with:
           coverage-file: coverage.xml
           coverage-threshold: '100'
-          ai-model: 'openai/gpt-4.1-nano'
+          ai-model: 'openai/gpt-4.1-mini'
+          # Repo-specific: benchmarks/ is a standalone perf harness, not product
+          # code under test. Kept OUT of the shipped defaults on purpose — a
+          # test-adequacy gate should not silently skip a code tree for every
+          # user. Unioned onto the defaults, so no need to re-list them.
+          extra-exclude-patterns: 'benchmarks/**'

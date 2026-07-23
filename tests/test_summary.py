@@ -51,7 +51,9 @@ def warning_report() -> Report:
 def pass_report() -> Report:
     return Report(
         layers=[
-            LayerResult("layer1", Verdict.PASS, "All files above threshold", [], short_circuit=True),
+            LayerResult(
+                "layer1", Verdict.PASS, "All files above threshold", [], short_circuit=True
+            ),
         ],
     )
 

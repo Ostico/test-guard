@@ -70,8 +70,14 @@ class TestRunLayer1:
         assert result.verdict == Verdict.FAIL
         assert result.short_circuit is False
         assert result.coverage_details == per_file
-        assert any(fv.file == "src/billing.py" and fv.verdict == Verdict.FAIL for fv in result.file_verdicts)
-        assert any(fv.file == "src/auth.py" and fv.verdict == Verdict.PASS for fv in result.file_verdicts)
+        assert any(
+            fv.file == "src/billing.py" and fv.verdict == Verdict.FAIL
+            for fv in result.file_verdicts
+        )
+        assert any(
+            fv.file == "src/auth.py" and fv.verdict == Verdict.PASS
+            for fv in result.file_verdicts
+        )
 
     @patch("src.layer1_coverage._compute_diff_coverage")
     def test_no_short_circuit_when_file_absent_from_src_stats(self, mock_cov, tmp_path):
@@ -86,8 +92,55 @@ class TestRunLayer1:
         assert result.verdict == Verdict.FAIL
         assert result.short_circuit is False
         assert result.coverage_details == {"src/auth.py": 92.5}
-        assert any(fv.file == "src/new_feature.py" and fv.verdict == Verdict.FAIL for fv in result.file_verdicts)
-        assert any("not in coverage report" in fv.reason for fv in result.file_verdicts if fv.file == "src/new_feature.py")
+        assert any(
+            fv.file == "src/new_feature.py" and fv.verdict == Verdict.FAIL
+            for fv in result.file_verdicts
+        )
+        assert any(
+            "not in coverage report" in fv.reason
+            for fv in result.file_verdicts
+            if fv.file == "src/new_feature.py"
+        )
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_trivial_absent_file_passes_not_fails(self, mock_cov, tmp_path):
+        # A source file absent from src_stats because its changes are trivial
+        # (whitespace/comments) has no executable lines to cover -> it must PASS,
+        # not FAIL, and must not block the short-circuit.
+        cov = tmp_path / "coverage.xml"
+        cov.write_text("<xml/>")
+        mock_cov.return_value = (100.0, {"src/auth.py": 100.0}, "")
+        result = run_layer1(
+            coverage_files=[str(cov)],
+            threshold=80,
+            diff_files=["src/auth.py", "src/docs_only.py"],
+            trivial_files={"src/docs_only.py"},
+        )
+        assert result.verdict == Verdict.PASS
+        assert result.short_circuit is True
+        trivial_fv = next(
+            fv for fv in result.file_verdicts if fv.file == "src/docs_only.py"
+        )
+        assert trivial_fv.verdict == Verdict.PASS
+        assert "no executable lines changed" in trivial_fv.reason
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_non_trivial_absent_file_still_fails(self, mock_cov, tmp_path):
+        # An absent file NOT marked trivial is a real coverage gap -> FAIL.
+        cov = tmp_path / "coverage.xml"
+        cov.write_text("<xml/>")
+        mock_cov.return_value = (100.0, {"src/auth.py": 100.0}, "")
+        result = run_layer1(
+            coverage_files=[str(cov)],
+            threshold=80,
+            diff_files=["src/auth.py", "src/new_feature.py"],
+            trivial_files={"src/docs_only.py"},  # unrelated file marked trivial
+        )
+        assert result.verdict == Verdict.FAIL
+        assert any(
+            fv.file == "src/new_feature.py" and fv.verdict == Verdict.FAIL
+            for fv in result.file_verdicts
+        )
 
     @patch("src.layer1_coverage._compute_diff_coverage")
     def test_pass_exactly_at_threshold(self, mock_cov, tmp_path):
@@ -161,11 +214,14 @@ class TestRunLayer1:
         showing a vacuous 100% coverage message."""
         cov = tmp_path / "coverage.xml"
         cov.write_text("""<?xml version="1.0" ?>
-<coverage version="7.6" timestamp="1700000000" lines-valid="100" lines-covered="100" line-rate="1" branches-covered="0" branches-valid="0" branch-rate="0" complexity="0">
+<coverage version="7.6" timestamp="1700000000" lines-valid="100"
+          lines-covered="100" line-rate="1" branches-covered="0"
+          branches-valid="0" branch-rate="0" complexity="0">
     <packages>
         <package name="." line-rate="1" branch-rate="0" complexity="0">
             <classes>
-                <class name="other.py" filename="other.py" line-rate="1" branch-rate="0" complexity="0">
+                <class name="other.py" filename="other.py" line-rate="1"
+                       branch-rate="0" complexity="0">
                     <lines><line number="1" hits="1"/></lines>
                 </class>
             </classes>
@@ -459,7 +515,10 @@ class TestDockerPathNormalization:
         mock_run.return_value = subprocess.CompletedProcess(
             args=["diff-cover"],
             returncode=0,
-            stdout='{"total_percent_covered": 90.0, "src_stats": {"lib/Controller/AuthCookie.php": {"percent_covered": 90.0}}}',
+            stdout=(
+                '{"total_percent_covered": 90.0, "src_stats": '
+                '{"lib/Controller/AuthCookie.php": {"percent_covered": 90.0}}}'
+            ),
             stderr="",
         )
         diff_files = ["lib/Controller/AuthCookie.php", "lib/Model/UserDao.php"]
@@ -489,7 +548,10 @@ class TestDockerPathNormalization:
         mock_run.return_value = subprocess.CompletedProcess(
             args=["diff-cover"],
             returncode=0,
-            stdout='{"total_percent_covered": 90.0, "src_stats": {"lib/AuthCookie.php": {"percent_covered": 90.0}}}',
+            stdout=(
+                '{"total_percent_covered": 90.0, "src_stats": '
+                '{"lib/AuthCookie.php": {"percent_covered": 90.0}}}'
+            ),
             stderr="",
         )
         run_layer1([str(cov)], threshold=80, diff_files=["lib/AuthCookie.php"])

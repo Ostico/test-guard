@@ -234,7 +234,7 @@ class TestRunPipeline:
             source_diffs={"src/auth.py": "+ login()"},
             deleted_files=set(),
             test_diffs={"tests/test_auth.py": "+ test_login()"},
-            l2_matched_tests={"src/auth.py": "tests/test_auth.py"},
+            l2_matched_tests={"src/auth.py": ["tests/test_auth.py"]},
             coverage_details={"src/auth.py": 75.0},
             coverage_threshold=80,
             model="openai/gpt-5-mini",
@@ -308,9 +308,10 @@ class TestRunPipeline:
         run_pipeline(base_config)
 
         call_kwargs = mock_l3.call_args.kwargs
+        # A source now maps to the LIST of its matched tests (empty if none).
         assert call_kwargs["l2_matched_tests"] == {
-            "src/auth.py": "tests/test_auth.py",
-            "src/billing.py": None,
+            "src/auth.py": ["tests/test_auth.py"],
+            "src/billing.py": [],
         }
 
     @patch("src.main.run_layer3")
