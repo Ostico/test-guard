@@ -18,6 +18,31 @@ Reproducible measurement of the Layer 3 diff-compaction added in the
 Totals are also split **source vs test**, because a test-adequacy gate cares
 most about the *test* diffs surviving truncation.
 
+## Telling an intelligent shrink from a dumb one
+
+Token count **alone cannot** judge shrink quality — the dumbest shrink
+(delete everything) wins on tokens and is useless. So the benchmark measures
+**two axes**:
+
+1. **Size** — total tokens (must fit the budget).
+2. **Signal retention** — `% of changed (+/-) lines kept`, split by role.
+   Changed lines are the actual signal; context lines are filler.
+
+A shrink is **intelligent** when, at the same-or-lower token cost, it keeps
+**more TEST-file signal** — because the tool's job is judging test adequacy.
+The concrete rule: **TEST kept% ≥ SOURCE kept%** (protect tests first), ideally
+≥ the BEFORE baseline. The `--assert-intelligent` flag turns this into a
+regression gate (exit non-zero when TEST kept% < SOURCE kept%):
+
+```bash
+python benchmarks/benchmark_compaction.py --assert-intelligent
+```
+
+The **ground-truth verdict** check (Part A of the LLM step below) is the final
+proof: with real coverage ~100%, the correct verdict is roughly *pass*; an
+intelligent shrink keeps enough test signal for the model to land it, a dumb
+one starves the model into a wrong/low-confidence guess.
+
 ## Files
 
 - `benchmark_compaction.py` — the harness.

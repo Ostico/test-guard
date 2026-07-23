@@ -119,6 +119,32 @@ def baseline_sanitize(diff: str, max_chars: int = _MAX_CHARS) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Signal retention: the intelligent-vs-dumb discriminator. Token count alone
+# is gameable (delete everything → 0 tokens → "best"), so we also measure how
+# much of the *changed* content (added/removed lines) survives shrinking. An
+# intelligent shrink keeps MORE test-file signal at the same-or-lower token
+# cost; a dumb one just deletes whatever is cheapest.
+# --------------------------------------------------------------------------- #
+def _count_changes(text: str) -> int:
+    """Number of changed lines (+/-), excluding the +++/--- file header."""
+    n = 0
+    for ln in text.splitlines():
+        if ln.startswith(("+++", "---")):
+            continue
+        if ln.startswith(("+", "-")):
+            n += 1
+    return n
+
+
+def _count_hunks(text: str) -> int:
+    return sum(1 for ln in text.splitlines() if ln.startswith("@@"))
+
+
+def _ret_num(part: int, whole: int) -> float:
+    return part / whole if whole else 1.0
+
+
+# --------------------------------------------------------------------------- #
 # Diff sources
 # --------------------------------------------------------------------------- #
 def _github_style_patch(repo: str, base: str, path: str) -> str:
@@ -168,6 +194,8 @@ def run(args: argparse.Namespace) -> None:
 
     tot = {"raw": 0, "after": 0, "before": 0}
     by_role = {"source": dict(tot), "test": dict(tot)}
+    # Signal retention: changed (+/-) lines kept, by role.
+    sig = {"source": dict(tot), "test": dict(tot)}
     rows = []
     for f in files:
         patch = f["patch"]
@@ -179,6 +207,10 @@ def run(args: argparse.Namespace) -> None:
             bucket["raw"] += r
             bucket["after"] += a
             bucket["before"] += b
+        srow = sig[f["role"]]
+        srow["raw"] += _count_changes(patch)
+        srow["after"] += _count_changes(after)
+        srow["before"] += _count_changes(before)
 
     for path, role, r, a, b, cut in sorted(rows, key=lambda x: -x[2]):
         name = path if len(path) <= 52 else "…" + path[-51:]
@@ -199,8 +231,36 @@ def run(args: argparse.Namespace) -> None:
     print(f"\nPer-batch user-prompt token budget = {m._USER_PROMPT_TOKEN_BUDGET} "
           f"| input cap = {m._INPUT_TOKEN_LIMIT}")
 
+    # --- Signal retention: the intelligent-vs-dumb discriminator ------------ #
+    def ret(part: int, whole: int) -> str:
+        return f"{100 * part // max(whole, 1)}%"
+
+    print("\nSIGNAL RETENTION — % of changed (+/-) lines kept "
+          "(higher = more signal survives at the same budget):")
+    print(f"  {'role':6} {'raw':>6} {'AFTER kept':>16} {'BEFORE kept':>16}")
+    for role in ("test", "source"):
+        s = sig[role]
+        print(f"  {role:6} {s['raw']:>6} "
+              f"{s['after']:>7} ({ret(s['after'], s['raw'])})".rjust(24)
+              + f"{s['before']:>7} ({ret(s['before'], s['raw'])})".rjust(16))
+    t, src = sig["test"], sig["source"]
+    print("\n  >> An INTELLIGENT shrink protects TEST signal first: TEST kept% "
+          "should be >= SOURCE kept%,")
+    print("     and ideally >= the BEFORE baseline. Today (dumb per-file cap):")
+    print(f"       test kept   = {ret(t['after'], t['raw'])}  "
+          f"(baseline {ret(t['before'], t['raw'])})")
+    print(f"       source kept = {ret(src['after'], src['raw'])}  "
+          f"(baseline {ret(src['before'], src['raw'])})")
+    test_protected = _ret_num(t["after"], t["raw"]) >= _ret_num(src["after"], src["raw"])
+    print(f"       test>=source ? {'PASS' if test_protected else 'FAIL'}")
+
     if args.emit_samples:
         emit_samples(files, coverage, count)
+
+    if args.assert_intelligent and not test_protected:
+        print("\nREGRESSION GATE FAILED: test-file signal retention < source-file "
+              "retention. The shrink is not protecting test hunks first.")
+        sys.exit(1)
 
 
 def emit_samples(files, coverage, count) -> None:
@@ -275,6 +335,9 @@ if __name__ == "__main__":
                         "coverage summary in the eval prompt")
     p.add_argument("--emit-samples", action="store_true",
                    help="write compressed_sample.txt and eval_prompt.txt")
+    p.add_argument("--assert-intelligent", action="store_true",
+                   help="exit non-zero if test-file signal retention < source "
+                        "(regression gate for the intelligent-shrink follow-up)")
     p.add_argument("--out-dir", default=os.environ.get("TMPDIR", "/tmp") + "/tg-bench",
                    help="output dir for --emit-samples")
     args = p.parse_args()
