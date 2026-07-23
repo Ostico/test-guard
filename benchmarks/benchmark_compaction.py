@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -256,6 +257,26 @@ def run(args: argparse.Namespace) -> None:
     test_protected = _ret_num(t["after"], t["raw"]) >= _ret_num(src["after"], src["raw"])
     print(f"       test>=source ? {'PASS' if test_protected else 'FAIL'}")
 
+    # --- Per-CALL token axis: the real question for the 8k GitHub Models cap - #
+    calls, sys_tok, counter_name = simulate_calls(files, count)
+    fits_8k = True
+    if calls:
+        cap = m._INPUT_TOKEN_LIMIT
+        worst = max(calls)
+        over = [c for c in calls if c > cap]
+        fits_8k = not over
+        print(f"\nPER-CALL TOKENS — simulated {len(calls)} API call(s) the real "
+              f"pipeline would send (system {sys_tok} + built batch prompt):")
+        print(f"  counter={counter_name} | input cap={cap} | "
+              f"per-call min={min(calls)} max={worst} mean={sum(calls) // len(calls)}")
+        print(f"  calls OVER the {cap}-token cap: {len(over)} / {len(calls)}")
+        if counter_name.startswith("heuristic"):
+            print("  (NOTE: chars//3 heuristic over-counts real code tokens; install "
+                  "tiktoken for the true cap check.)")
+        print(f"  >> fits 8k cap ? {'PASS' if fits_8k else 'FAIL — some calls exceed the cap'}")
+        print("     (test↔source matching here is a filename-stem proxy for the "
+              "Layer 2 heuristic, so exact counts are approximate.)")
+
     if args.emit_samples:
         emit_samples(files, coverage, count)
 
@@ -263,6 +284,49 @@ def run(args: argparse.Namespace) -> None:
         print("\nREGRESSION GATE FAILED: test-file signal retention < source-file "
               "retention. The shrink is not protecting test hunks first.")
         sys.exit(1)
+
+    if args.assert_fits_8k and not fits_8k:
+        print("\nREGRESSION GATE FAILED: at least one simulated API call exceeds "
+              "the input token cap. Batch assembly overflows the GitHub Models limit.")
+        sys.exit(1)
+
+
+def simulate_calls(files: list[dict], count) -> tuple[list[int], int, str]:
+    """Simulate the API calls the real pipeline would send for this diff set and
+    return (per-call total tokens, system-prompt tokens, counter name).
+
+    Mirrors run_layer3: batch the source files (``_batch_files``), select each
+    batch's test diffs (``_filter_test_diffs_for_batch``), build the prompt
+    (``_build_ai_prompt``), and count system + prompt tokens. This is the axis
+    that actually decides whether a call fits the 8k GitHub Models cap — the
+    per-file table above cannot see it. test↔source matching is approximated
+    from filename stems (the real matcher is test-guard's Layer 2 heuristic).
+    """
+    _, counter_name = _make_counter()
+    source_diffs = {f["path"]: f["patch"] for f in files if f["role"] == "source"}
+    test_diffs = {f["path"]: f["patch"] for f in files if f["role"] == "test"}
+    if not source_diffs:
+        return [], 0, counter_name
+
+    def stem(path: str) -> str:
+        base = path.rsplit("/", 1)[-1]
+        return re.sub(r"(Test|Spec|_test)?\.\w+$", "", base)
+
+    matched = {
+        s: next((t for t in test_diffs if stem(t) == stem(s)), None)
+        for s in source_diffs
+    }
+    sys_prompt = (_REPO_ROOT / "prompts" / "test_adequacy.txt").read_text()
+    sys_tok = count(sys_prompt)
+    batches = m._batch_files(list(source_diffs), source_diffs, test_diffs, matched)
+    calls: list[int] = []
+    for batch in batches:
+        batch_tests = m._filter_test_diffs_for_batch(batch, test_diffs, matched)
+        prompt = m._build_ai_prompt(
+            batch, source_diffs, batch_tests, None, 80.0, matched
+        )
+        calls.append(count(prompt) + sys_tok)
+    return calls, sys_tok, counter_name
 
 
 def emit_samples(files, coverage, count) -> None:
@@ -343,6 +407,9 @@ if __name__ == "__main__":
     p.add_argument("--assert-intelligent", action="store_true",
                    help="exit non-zero if test-file signal retention < source "
                         "(regression gate for the intelligent-shrink follow-up)")
+    p.add_argument("--assert-fits-8k", action="store_true",
+                   help="exit non-zero if any simulated API call exceeds the "
+                        "input token cap (per-call overflow regression gate)")
     p.add_argument("--out-dir", default=os.environ.get("TMPDIR", "/tmp") + "/tg-bench",
                    help="output dir for --emit-samples")
     args = p.parse_args()

@@ -18,6 +18,28 @@ Reproducible measurement of the Layer 3 diff-compaction added in the
 Totals are also split **source vs test**, because a test-adequacy gate cares
 most about the *test* diffs surviving truncation.
 
+## Per-call token axis (does a real API call fit the 8k cap?)
+
+The per-file table below measures each file in isolation. That is **not** what
+GitHub Models sees — it sees whole batch prompts. `simulate_calls` reproduces
+the real pipeline (`_batch_files` → `_filter_test_diffs_for_batch` →
+`_build_ai_prompt`), counts system + prompt tokens per call, and reports the
+worst call against `_INPUT_TOKEN_LIMIT`:
+
+```bash
+python benchmarks/benchmark_compaction.py --assert-fits-8k   # gate: exit≠0 if any call > cap
+```
+
+> **Finding (this fixture).** All 18 simulated calls land at **16k–18k tokens,
+> ~2× the 8k cap**, so the gate FAILS. Root cause is *not* per-file size (the
+> largest compacted file is ~4k real tokens) — it is that `_build_ai_prompt`
+> attaches **every** test-file diff to **every** batch by design, so a PR with a
+> large aggregate test payload cannot fit any call under 8k. Per-file compaction
+> and the intelligent shrink do not address this batch-assembly overflow; a fix
+> (bounding the per-call test payload) is a separate, intent-changing decision.
+> test↔source matching here is a filename-stem proxy for the Layer 2 heuristic,
+> so counts are approximate but the order of magnitude is real.
+
 ## Telling an intelligent shrink from a dumb one
 
 Token count **alone cannot** judge shrink quality — the dumbest shrink
