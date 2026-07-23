@@ -308,28 +308,45 @@ def _build_ai_prompt(
         source_section.append(f"```diff\n{sanitized}\n```")
         source_section.append("")
 
-    test_kept = test_total = 0
-    test_section: list[str] = []
-    if test_diffs:
-        test_section += ["## Test File Changes (relevant to files above)", ""]
-        for test_file, diff in test_diffs.items():
-            sources = matched_test_to_sources.get(test_file)
-            annotation = f"matched to {', '.join(sources)}" if sources else "candidate"
-            sanitized = _sanitize_diff(diff, max_chars=_test_max_chars(max_diff_chars))
-            test_total += _count_change_hunks(diff)
-            test_kept += _count_change_hunks(sanitized)
-            test_section.append(f"### {test_file} (modified, {annotation})")
-            test_section.append(f"```diff\n{sanitized}\n```")
-            test_section.append("")
+    # Build one entry per test diff with metadata, so if the assembled prompt
+    # overflows the per-call budget we can shed the least-valuable tests.
+    test_entries: list[dict[str, object]] = []
+    test_total = 0
+    for test_file, diff in test_diffs.items():
+        sources = matched_test_to_sources.get(test_file)
+        annotation = f"matched to {', '.join(sources)}" if sources else "candidate"
+        sanitized = _sanitize_diff(diff, max_chars=_test_max_chars(max_diff_chars))
+        test_total += _count_change_hunks(diff)
+        test_entries.append({
+            "text": f"### {test_file} (modified, {annotation})\n"
+                    f"```diff\n{sanitized}\n```\n",
+            "is_candidate": not sources,   # unmatched → rides every batch
+            "hunks": _count_change_hunks(sanitized),
+            "cost": _estimate_tokens(sanitized),
+        })
 
-    parts = list(coverage_block)
-    warning = _evidence_warning(src_kept, src_total, test_kept, test_total)
-    if warning:
-        parts.append(warning)
-        parts.append("")
-    parts += source_section
-    parts += test_section
-    return "\n".join(parts)
+    def assemble(entries: list[dict[str, object]]) -> str:
+        test_kept = sum(int(e["hunks"]) for e in entries)
+        parts = list(coverage_block)
+        warning = _evidence_warning(src_kept, src_total, test_kept, test_total)
+        if warning:
+            parts += [warning, ""]
+        parts += source_section
+        if entries:
+            parts += ["## Test File Changes (relevant to files above)", ""]
+            parts += [str(e["text"]) for e in entries]
+        return "\n".join(parts)
+
+    # Hard ceiling: shed the least-valuable test diffs (candidates before
+    # matched, largest cost first) until the assembled prompt fits the per-call
+    # budget. This is what guarantees every request stays under the model's
+    # input cap even when the aggregate test payload is large. The evidence
+    # banner (recomputed in assemble) tells the model what was dropped.
+    kept = list(test_entries)
+    while kept and _estimate_tokens(assemble(kept)) > _USER_PROMPT_TOKEN_BUDGET:
+        victim = max(kept, key=lambda e: (bool(e["is_candidate"]), int(e["cost"])))
+        kept.remove(victim)
+    return assemble(kept)
 
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "test_adequacy.txt"

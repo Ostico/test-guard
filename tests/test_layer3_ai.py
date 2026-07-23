@@ -215,6 +215,31 @@ class TestIntelligentShrink:
         assert "60% of test hunks omitted" in w
         assert "warning" in w  # instructs the model to hedge
 
+    def test_prompt_ceiling_sheds_tests_to_fit_budget(self):
+        # Several large candidate test diffs whose combined size blows the
+        # per-call budget. The ceiling must shed some until the assembled
+        # prompt fits, and report it via the evidence banner.
+        def big(n: int) -> str:
+            body = "".join(f"+line{i}_{'x' * 24}\n" for i in range(n))
+            return f"@@ -1,1 +1,{n + 1} @@\n ctx\n{body}"
+
+        test_diffs = {f"tests/t{k}.py": big(250) for k in range(4)}
+        prompt = _build_ai_prompt(
+            files_for_ai=["src/a.py"],
+            source_diffs={"src/a.py": "@@ -1,1 +1,2 @@\n ctx\n+x\n"},
+            test_diffs=test_diffs,
+            coverage_details=None,
+            coverage_threshold=80.0,
+            matched_tests={"src/a.py": None},  # all tests are candidates
+            max_diff_chars=10_000,
+        )
+        # Fits the per-call budget after shedding.
+        assert layer3_ai._estimate_tokens(prompt) <= layer3_ai._USER_PROMPT_TOKEN_BUDGET
+        # At least one test file was dropped, and the banner says so.
+        shown = sum(1 for k in test_diffs if k in prompt)
+        assert shown < len(test_diffs)
+        assert "Evidence Completeness" in prompt
+
     def test_build_prompt_emits_evidence_banner_when_truncated(self):
         import re
 
