@@ -15,23 +15,19 @@ Test-Guard combines diff coverage, heuristic test-file matching across 19 langua
 
 Test-Guard evaluates every source file in your PR independently. Layer 1 and Layer 2 extract data (coverage percentages, test-file matches); Layer 3 combines that data with its own analysis to produce the authoritative verdict:
 
-```text
-PR Opened
-   │
-   ▼
-Layer 1: Diff Coverage ─── [all files ≥ threshold] ──► PASS (done)
-   │
-   ▼
-Layer 2: File Matching ─── advisory hints for Layer 3
-   │                        (short-circuits only when AI is disabled)
-   ▼
-Layer 3: Per-File Analysis
-   ├── Gate 1-8: Deterministic shortcuts (coverage + test relevance + triviality)
-   │   resolves most files without AI
-   └── AI fallthrough: only ambiguous files sent to AI
-       │
-       ▼
-   Layer 3 verdict overrides all other layers
+```mermaid
+flowchart TD
+    A[PR Opened] --> B["Layer 1 — Diff Coverage"]
+    B -->|all files ≥ threshold| Z(["✅ PASS — done"])
+    B --> C["Layer 2 — File Matching<br/>(advisory hints for Layer 3;<br/>short-circuits only when AI is disabled)"]
+    C --> D["Layer 3 — Per-File Analysis"]
+    D --> E["Gates 1–8: deterministic shortcuts<br/>(coverage + test relevance + triviality)<br/>resolve most files without AI"]
+    E -->|ambiguous file remains| F["AI fallthrough — only unresolved files"]
+    F --> G(["Layer 3 verdict overrides Layers 1 & 2"])
+    E -->|fully resolved| G
+
+    style Z fill:#2ea44f,color:#fff,stroke:#22863a
+    style G fill:#0969da,color:#fff,stroke:#054594
 ```
 
 **Key design principle:** Layer 3 performs a from-scratch per-file evaluation. It doesn't inherit Layer 2's verdicts — it uses L1 coverage data and L2 matched-test hints as inputs alongside test diffs and triviality detection to reach its own conclusions.
@@ -242,14 +238,49 @@ Layer 3 uses the [GitHub Models](https://github.com/marketplace/models) inferenc
 
 ## AI Architecture
 
+GitHub Models' free tier caps requests at **8K input tokens**. A naive implementation hits that wall constantly on real PRs — Test-Guard avoids it with three layers working together: **compaction** (shrink each diff without losing signal), **batching** (group files so a call never exceeds the cap), and **matching** (only attach the test diffs that actually belong to this batch).
+
+```mermaid
+flowchart LR
+    subgraph Per file
+        A[Raw diff] --> B["Compact<br/>(unidiff: shed context lines,<br/>redact injection attempts)"]
+        B --> C{Still too big?}
+        C -->|yes| D["Priority truncate<br/>(keep signature/branch hunks<br/>+ highest-change hunks first)"]
+        C -->|no| E[Compacted diff]
+        D --> E
+    end
+    E --> F["Batch assembly<br/>(_batch_files: greedy pack by token cost)"]
+    F --> G["Batch-scoped test filter<br/>(a matched test rides only<br/>its own source's batch)"]
+    G --> H{"Assembled prompt<br/>&gt; token budget?"}
+    H -->|yes| I["Hard ceiling<br/>(shed lowest-value test diffs,<br/>candidates before matches, largest first)"]
+    H -->|no| J["Evidence banner<br/>(states what was omitted)"]
+    I --> J
+    J --> K["Call the model<br/>(≤ 8K tokens, guaranteed)"]
+
+    style K fill:#0969da,color:#fff,stroke:#054594
+```
+
+### Diff Compaction
+
+Every diff is compacted before it ever reaches a prompt (`src/layer3_ai.py`):
+
+- **Context ladder:** context lines (unchanged code around a change) are the first thing dropped — 3 lines → 1 → 0 — before any *changed* line is touched. Changed lines are the actual signal; context is filler.
+- **Priority truncation:** when hunks still don't fit, they aren't dropped in file order — hunks introducing a signature, branch, or the most changed lines are kept first; boilerplate goes first.
+- **Test diffs get more room:** test files get a 1.6× larger character budget than source files, because judging test adequacy is the whole point of Layer 3.
+- **Evidence-Completeness banner:** if anything was dropped, the prompt says so explicitly (`## ⚠️ Evidence Completeness` — N of M hunks shown, % of test hunks omitted) and tells the model to treat omitted code as unknown rather than assume it's fine.
+
+Reproducible before/after numbers — including a real 29-file PR, both a raw-token axis and a signal-retention axis (to catch a "shrink" that just deletes everything) — live in [`benchmarks/`](benchmarks/README.md).
+
 ### Smart Batching
 
-When a PR touches many files or has large diffs, Test-Guard automatically splits work into batches that fit within the model's token limit (~6K user-prompt tokens per batch).
+When a PR touches many files or has large diffs, Test-Guard splits work into batches that fit within a **hard-guaranteed** per-call token budget (~6.1K user-prompt tokens, real GPT tokens via `tiktoken` when installed).
 
-- **Token estimation:** `len(diff_text) / 4` tokens per diff.
-- **Per-file cost:** Source diff + matched test diffs + overhead.
-- **Greedy packing:** Files are packed into the current batch until adding the next file would exceed the budget, then a new batch starts.
-- **Oversized files:** A single file that exceeds the budget gets its own batch — the retry path handles it with tighter diff truncation.
+- **Per-file cost:** compacted source diff + its matched test diffs + per-entry overhead.
+- **Greedy packing:** files are packed into the current batch until adding the next file would exceed the budget, then a new batch starts.
+- **Batch-scoped test matching:** a test file matched to a source (Layer 2) travels **only** with that source's own batch — it no longer rides every batch in the PR. Only genuinely unmatched tests (name doesn't correlate to any source) remain "candidates" attached everywhere, and even those are size-bounded.
+- **Multi-test-per-source:** one source can match *several* test files at once — e.g. `FooTest` + `FooIntegrationTest` — all of them travel with that source's batch. Configure qualifier-tolerant patterns for this via [custom test patterns](#custom-test-patterns) if your defaults don't already cover it.
+- **Hard ceiling (final guarantee):** after assembly, if a batch prompt still exceeds the token budget, the lowest-value test diffs are shed one at a time (unmatched candidates before matched tests, largest first) until it fits. This is the backstop that makes the 8K limit unbreakable regardless of language or naming convention.
+- **Oversized single files:** a file that exceeds the budget alone gets its own batch — the retry path handles it with tighter diff truncation.
 
 ### Model Fallback Chain
 
