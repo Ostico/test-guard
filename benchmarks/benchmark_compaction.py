@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Reproducible benchmark for test-guard's Layer 3 diff compaction.
+
+Compares, on a real multi-file PR diff, the token footprint of:
+
+  RAW      the untouched diff (what a naive prompt would send)
+  BEFORE   the pre-unidiff behaviour: blind character-cut truncation
+           (reproduced in-script so this runs on any branch)
+  AFTER    the current src.layer3_ai._sanitize_diff (unidiff compaction +
+           hunk-boundary truncation)
+
+It also breaks the totals down by source-file vs test-file diffs, because a
+test-adequacy gate cares most about the TEST diffs surviving truncation.
+
+Usage
+-----
+    # default: use the committed fixture (no external repo needed)
+    python benchmarks/benchmark_compaction.py
+
+    # regenerate the diff set live from a local git checkout
+    python benchmarks/benchmark_compaction.py --repo /path/to/repo --base develop
+
+    # also write the compressed sample + the LLM-eval prompt files
+    python benchmarks/benchmark_compaction.py --emit-samples --out-dir /tmp/tg-bench
+
+Token counting uses tiktoken (o200k_base ≈ gpt-4.1 family) when installed,
+otherwise falls back to test-guard's own chars//3 heuristic. Install the real
+tokenizer with:  pip install tiktoken
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+# Make `import src.layer3_ai` work regardless of where this is run from.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
+import src.layer3_ai as m  # noqa: E402
+
+_DEFAULT_FIXTURE = _REPO_ROOT / "benchmarks" / "fixtures" / "matecat_pr_diffs.json"
+_MAX_CHARS = 10_000  # test-guard's default per-file diff char cap (_sanitize_diff)
+
+
+# --------------------------------------------------------------------------- #
+# Token counting
+# --------------------------------------------------------------------------- #
+def _make_counter():
+    try:
+        import tiktoken
+
+        enc = tiktoken.get_encoding("o200k_base")
+        return lambda s: len(enc.encode(s)), "tiktoken:o200k_base"
+    except Exception:
+        # test-guard's own budget heuristic (src.layer3_ai._estimate_tokens).
+        return m._estimate_tokens, "heuristic:chars//3"
+
+
+# --------------------------------------------------------------------------- #
+# BEFORE: the pre-unidiff _sanitize_diff (blind char cut). Kept here verbatim
+# so the baseline is reproducible even on branches where the old code is gone.
+# --------------------------------------------------------------------------- #
+def baseline_sanitize(diff: str, max_chars: int = _MAX_CHARS) -> str:
+    lines = [
+        "[REDACTED]" if m._INJECTION_LINE_RE.match(line) else line
+        for line in diff.splitlines()
+    ]
+    sanitized = "\n".join(lines)
+    if len(sanitized) > max_chars:
+        return sanitized[:max_chars] + "...[truncated]"
+    return sanitized
+
+
+# --------------------------------------------------------------------------- #
+# Diff sources
+# --------------------------------------------------------------------------- #
+def _github_style_patch(repo: str, base: str, path: str) -> str:
+    raw = subprocess.check_output(
+        ["git", "-C", repo, "diff", f"{base}...HEAD", "--", path], text=True
+    )
+    lines = raw.splitlines(keepends=True)
+    for i, ln in enumerate(lines):
+        if ln.startswith("@@"):
+            return "".join(lines[i:])  # hunks only, mirrors GitHub's patch field
+    return ""
+
+
+def _classify(path: str) -> str:
+    return "test" if ("/tests/" in path or path.endswith("Test.php")) else "source"
+
+
+def load_files(args: argparse.Namespace) -> tuple[list[dict], list[str]]:
+    if args.repo:
+        names = subprocess.check_output(
+            ["git", "-C", args.repo, "diff", f"{args.base}...HEAD", "--name-only"],
+            text=True,
+        ).split()
+        files = []
+        for name in names:
+            patch = _github_style_patch(args.repo, args.base, name)
+            if patch:
+                files.append({"path": name, "role": _classify(name), "patch": patch})
+        return files, []
+    fixture = json.loads(Path(args.fixture).read_text())
+    return fixture["files"], fixture.get("coverage_summary", [])
+
+
+# --------------------------------------------------------------------------- #
+# Report
+# --------------------------------------------------------------------------- #
+def run(args: argparse.Namespace) -> None:
+    count, counter_name = _make_counter()
+    files, coverage = load_files(args)
+
+    print(f"Diff set: {len(files)} files | token counter: {counter_name} "
+          f"| per-file cap: {_MAX_CHARS} chars\n")
+
+    header = f"{'file':52} {'role':>6} {'raw':>7} {'AFTER':>7} {'BEFORE':>7} {'cut?':>5}"
+    print(header)
+    print("-" * len(header))
+
+    tot = {"raw": 0, "after": 0, "before": 0}
+    by_role = {"source": dict(tot), "test": dict(tot)}
+    rows = []
+    for f in files:
+        patch = f["patch"]
+        after = m._sanitize_diff(patch, max_chars=_MAX_CHARS)
+        before = baseline_sanitize(patch, max_chars=_MAX_CHARS)
+        r, a, b = count(patch), count(after), count(before)
+        rows.append((f["path"], f["role"], r, a, b, len(after) < len(patch)))
+        for bucket in (tot, by_role[f["role"]]):
+            bucket["raw"] += r
+            bucket["after"] += a
+            bucket["before"] += b
+
+    for path, role, r, a, b, cut in sorted(rows, key=lambda x: -x[2]):
+        name = path if len(path) <= 52 else "…" + path[-51:]
+        print(f"{name:52} {role:>6} {r:>7} {a:>7} {b:>7} {'YES' if cut else '-':>5}")
+
+    print("-" * len(header))
+
+    def pct(part: int, whole: int) -> str:
+        return f"{100 * (whole - part) // max(whole, 1)}%"
+
+    print(f"\nTOTAL   raw={tot['raw']}  AFTER={tot['after']} "
+          f"({pct(tot['after'], tot['raw'])} fewer than raw)  "
+          f"BEFORE={tot['before']} ({pct(tot['before'], tot['raw'])} fewer than raw)")
+    for role in ("source", "test"):
+        rt = by_role[role]
+        print(f"  {role:6} raw={rt['raw']:>6}  AFTER={rt['after']:>6}  "
+              f"BEFORE={rt['before']:>6}")
+    print(f"\nPer-batch user-prompt token budget = {m._USER_PROMPT_TOKEN_BUDGET} "
+          f"| input cap = {m._INPUT_TOKEN_LIMIT}")
+
+    if args.emit_samples:
+        emit_samples(files, coverage, count)
+
+
+def emit_samples(files, coverage, count) -> None:
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    biggest = max(files, key=lambda f: len(f["patch"]))
+    comp = m._sanitize_diff(biggest["patch"], max_chars=_MAX_CHARS)
+    sample = out / "compressed_sample.txt"
+    sample.write_text(
+        f"# FILE: {biggest['path']}\n"
+        f"# raw={count(biggest['patch'])} tok  compacted={count(comp)} tok\n\n{comp}"
+    )
+
+    # Assemble a realistic Layer-3 prompt (source + its matched test) for the
+    # LLM-understandability agent test.
+    sys_prompt = (_REPO_ROOT / "prompts" / "test_adequacy.txt").read_text()
+    # Pick the largest source + largest test diff: the budget-stressing pair
+    # that best exercises hunk-boundary truncation (reproduces the eval below).
+    srcs = [f for f in files if f["role"] == "source"]
+    tsts = [f for f in files if f["role"] == "test"]
+    src = max(srcs, key=lambda f: len(f["patch"])) if srcs else None
+    tst = max(tsts, key=lambda f: len(f["patch"])) if tsts else None
+    parts = ["## Coverage Summary", *coverage, "", "## Source File Changes", ""]
+    if src:
+        parts.append(f"### {src['path']}\n```diff\n"
+                     f"{m._sanitize_diff(src['patch'])}\n```\n")
+    parts += ["## Test File Changes", ""]
+    if tst:
+        parts.append(f"### {tst['path']}\n```diff\n"
+                     f"{m._sanitize_diff(tst['patch'])}\n```\n")
+    user = "\n".join(parts)
+    (out / "eval_prompt.txt").write_text(
+        f"===SYSTEM===\n{sys_prompt}\n\n===USER===\n{user}"
+    )
+    print(f"\nWrote {sample}")
+    print(f"Wrote {out / 'eval_prompt.txt'} "
+          f"(system+user = {count(sys_prompt + user)} tok)")
+    print("\nLLM-understandability step: hand eval_prompt.txt to a review agent "
+          "and ask it to (A) produce the test-adequacy verdict and (B) score how "
+          "understandable the compressed diff is + flag any lost context. See "
+          "benchmarks/README.md.")
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--fixture", default=str(_DEFAULT_FIXTURE),
+                   help="captured diff fixture JSON (default: MateCat PR)")
+    p.add_argument("--repo", help="regenerate diffs live from this git checkout")
+    p.add_argument("--base", default="develop",
+                   help="base ref for --repo (diff is <base>...HEAD)")
+    p.add_argument("--emit-samples", action="store_true",
+                   help="write compressed_sample.txt and eval_prompt.txt")
+    p.add_argument("--out-dir", default=os.environ.get("TMPDIR", "/tmp") + "/tg-bench",
+                   help="output dir for --emit-samples")
+    args = p.parse_args()
+    run(args)
