@@ -25,6 +25,11 @@ most about the *test* diffs surviving truncation.
   captured as GitHub-style per-file patches (hunks only, no `---/+++` header,
   exactly what GitHub's PR-files API returns in `patch`). Committed so the
   benchmark runs standalone with **no external checkout**.
+- `fixtures/matecat_cov.xml.gz` — the Clover coverage report for the **same**
+  PR (the artifact test-guard's Layer 1 consumes). The harness derives per-file
+  *changed-line* coverage from it (added executable lines ∩ Clover, covered =
+  `count>0`) for the eval prompt's Coverage Summary. gzipped (~200 KB); the
+  harness reads `.gz` directly. Override with `--coverage path/to.xml[.gz]`.
 
 ## Run it
 

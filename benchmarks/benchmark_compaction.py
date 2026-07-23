@@ -43,7 +43,50 @@ sys.path.insert(0, str(_REPO_ROOT))
 import src.layer3_ai as m  # noqa: E402
 
 _DEFAULT_FIXTURE = _REPO_ROOT / "benchmarks" / "fixtures" / "matecat_pr_diffs.json"
+_DEFAULT_COVERAGE = _REPO_ROOT / "benchmarks" / "fixtures" / "matecat_cov.xml.gz"
 _MAX_CHARS = 10_000  # test-guard's default per-file diff char cap (_sanitize_diff)
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: derive per-file changed-line coverage from the Clover report that
+# accompanies this PR (the same artifact test-guard's Layer 1 consumes), so the
+# eval prompt's coverage summary is real and reproducible, not hardcoded.
+# --------------------------------------------------------------------------- #
+def _load_clover(path: str) -> dict[str, dict[int, int]]:
+    import gzip
+    import xml.etree.ElementTree as ET
+
+    raw = (gzip.open(path).read() if path.endswith(".gz")
+           else Path(path).read_bytes())
+    root = ET.fromstring(raw)
+    counts: dict[str, dict[int, int]] = {}
+    for f in root.findall(".//file"):
+        name = f.get("name") or ""
+        per = {int(ln.get("num")): int(ln.get("count", "0"))
+               for ln in f.findall("line") if ln.get("num") is not None}
+        if per:
+            counts[name] = per
+    return counts
+
+
+def _changed_line_coverage(patch: str, clover: dict[str, dict[int, int]],
+                           relpath: str) -> float | None:
+    """% of a file's added, coverage-tracked lines that are covered (count>0)."""
+    # Match the absolute Clover path to the repo-relative changed path by suffix.
+    per = next((v for k, v in clover.items()
+                if k == relpath or k.endswith("/" + relpath)), None)
+    if per is None:
+        return None
+    try:
+        ps = m.PatchSet(f"--- a/f\n+++ b/f\n{patch}")
+    except Exception:
+        return None
+    added = [ln.target_line_no for f in ps for h in f for ln in h if ln.is_added]
+    tracked = [n for n in added if n in per]  # only executable lines Clover knows
+    if not tracked:
+        return None
+    covered = sum(1 for n in tracked if per[n] > 0)
+    return 100.0 * covered / len(tracked)
 
 
 # --------------------------------------------------------------------------- #
@@ -181,7 +224,24 @@ def emit_samples(files, coverage, count) -> None:
     tsts = [f for f in files if f["role"] == "test"]
     src = max(srcs, key=lambda f: len(f["patch"])) if srcs else None
     tst = max(tsts, key=lambda f: len(f["patch"])) if tsts else None
-    parts = ["## Coverage Summary", *coverage, "", "## Source File Changes", ""]
+
+    # Real coverage summary from the accompanying Clover report when present,
+    # else the static line carried in the fixture.
+    cov_lines = coverage
+    if args.coverage and Path(args.coverage).exists():
+        clover = _load_clover(args.coverage)
+        computed = []
+        for f in (x for x in files if x["role"] == "source"):
+            pct = _changed_line_coverage(f["patch"], clover, f["path"])
+            if pct is not None:
+                computed.append(f"- {f['path']}: {pct:.0f}% of changed lines "
+                                f"covered (threshold: 70%)")
+        if computed:
+            cov_lines = computed
+            print(f"\nCoverage summary derived from {args.coverage} "
+                  f"({len(computed)} source files matched)")
+
+    parts = ["## Coverage Summary", *cov_lines, "", "## Source File Changes", ""]
     if src:
         parts.append(f"### {src['path']}\n```diff\n"
                      f"{m._sanitize_diff(src['patch'])}\n```\n")
@@ -210,6 +270,9 @@ if __name__ == "__main__":
     p.add_argument("--repo", help="regenerate diffs live from this git checkout")
     p.add_argument("--base", default="develop",
                    help="base ref for --repo (diff is <base>...HEAD)")
+    p.add_argument("--coverage", default=str(_DEFAULT_COVERAGE),
+                   help="Clover XML (.xml or .xml.gz) for the changed-line "
+                        "coverage summary in the eval prompt")
     p.add_argument("--emit-samples", action="store_true",
                    help="write compressed_sample.txt and eval_prompt.txt")
     p.add_argument("--out-dir", default=os.environ.get("TMPDIR", "/tmp") + "/tg-bench",

@@ -150,5 +150,7 @@
       "role": "test",
       "patch": "@@ -61,7 +61,7 @@ class JobStructUnitTest extends AbstractTest\n \n         $result = $struct->setIsReview(true);\n \n-        $this->assertTrue($struct->getIsReview());\n+        $this->assertTrue($struct->isReview());\n         $this->assertSame($struct, $result);\n     }\n \n@@ -73,7 +73,7 @@ class JobStructUnitTest extends AbstractTest\n \n         $struct->setIsReview(false);\n \n-        $this->assertFalse($struct->getIsReview());\n+        $this->assertFalse($struct->isReview());\n     }\n \n     #[Test]\n@@ -81,7 +81,7 @@ class JobStructUnitTest extends AbstractTest\n     {\n         $struct = $this->createStruct();\n \n-        $this->assertFalse($struct->getIsReview());\n+        $this->assertFalse($struct->isReview());\n     }\n \n     #[Test]\n"
     }
-  ]
+  ],
+  "coverage_file": "matecat_cov.xml.gz",
+  "coverage_note": "Clover report for the same develop...HEAD PR; benchmark derives per-file changed-line coverage from it. coverage_summary is a static fallback."
 }
