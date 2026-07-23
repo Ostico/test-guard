@@ -205,6 +205,17 @@ Rules:
 - `test_template` **must** contain the `{name}` placeholder, and both fields must be strings — otherwise the run fails with a configuration error.
 - Globs use `fnmatch` semantics (`*` matches path separators too); `**` is conventional, not special.
 
+**Variant and multiple test files.** Put a `*` next to `{name}` to match qualifier-suffixed test names, and note that a source can bind to **several** test files at once (unit + integration + e2e) — all matched tests are reviewed together:
+
+```yaml
+test-patterns: |
+  {
+    "php": {"src_pattern": "lib/**/*.php", "test_template": "tests/**/{name}*Test.php"}
+  }
+```
+
+For `GetSearchController.php` this matches **both** `GetSearchControllerTest.php` and `GetSearchControllerReplaceUndoIntegrationTest.php`. This is how you cover non-standard names (e.g. `…UnitTest`, `…IntegrationTest`, `…RealSqlTest`) that the exact-match defaults miss — either widen the template with `*`, or add a precise entry per convention. Names that encode no source at all (Rust `#[cfg(test)]`, feature-named suites) can't be matched by any template; those stay unmatched and are size-bounded automatically.
+
 ---
 
 ## GitHub Models Setup
