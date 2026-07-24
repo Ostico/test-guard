@@ -44,6 +44,9 @@ class LayerResult:
         file_verdicts: Per-file verdicts produced by this layer.
         short_circuit: If True, this layer's verdict is final (Layer 2 in AI-disabled mode).
         coverage_details: Per-file coverage percentages (populated by Layer 1).
+        unmeasurable_files: Changed source files that ARE in the coverage report
+            but have no executable changed lines, so there is nothing to cover
+            (populated by Layer 1, consumed by Layer 3's Gate 2).
     """
 
     layer: str
@@ -52,6 +55,7 @@ class LayerResult:
     file_verdicts: list[FileVerdict]
     short_circuit: bool = False
     coverage_details: dict[str, float] | None = None
+    unmeasurable_files: set[str] = field(default_factory=lambda: set[str]())
 
 
 @dataclass

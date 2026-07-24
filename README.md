@@ -68,7 +68,7 @@ Each source file is evaluated against these gates in order. The first matching g
 | Gate | Condition | Verdict | Rationale |
 |:-----|:----------|:--------|:----------|
 | 1 | File was deleted | SKIP | No remaining code to test |
-| 2 | Diff is trivial (whitespace/comments only) | SKIP | Trivial changes don't need tests |
+| 2 | Nothing testable changed — trivial diff (whitespace/comments), **or** the file is in the coverage report with no executable changed lines | SKIP | There is nothing a test could cover |
 | 3 | Coverage ≥ threshold (any test relevance) | PASS | Existing tests already cover the changes |
 | 4 | No relevant tests in PR + no/low coverage | FAIL | No evidence of test coverage at all |
 | 5 | Coverage < threshold + relevant tests exist (YES) | FAIL | Tests exist but don't cover enough |
@@ -183,6 +183,15 @@ The two compose: the final exclude set is `exclude-patterns ∪ extra-exclude-pa
 > The defaults stay deliberately conservative — a test-adequacy gate should never *silently* skip a whole tree of code for you. Repo-specific skips (benchmark harnesses, fixture generators) belong in `extra-exclude-patterns`, not in the shipped defaults.
 
 **Keep `exclude-patterns` in sync with your coverage tool's own exclusions.** These are two independent lists. A changed source file that your coverage tool excludes (e.g. via `.coveragerc`, Jest `coveragePathIgnorePatterns`) is absent from the coverage report, but if Test-Guard still considers it a source file, Layer 1 fails it with **"not in coverage report."** To avoid this, add the same file to `exclude-patterns` so Test-Guard skips it too. Files with non-source extensions (`.json`, `.md`, `.yml`, `.ini`, …) are ignored automatically and need no entry.
+
+**You do *not* need an exclude for declaration-only changes.** diff-cover reports coverage for changed **executable** lines, so a file whose diff touches only type declarations, interface members, or doc comments never shows up in its output — even at 100% coverage. Test-Guard resolves that ambiguity by reading the coverage report directly (Clover, Cobertura, JaCoCo, LCOV):
+
+| Situation | Verdict |
+|:----------|:--------|
+| File **is** in the coverage report, absent from diff-cover's output | ✅ pass — *"in coverage report, but no executable lines changed"* |
+| File is **not** in the coverage report at all | ❌ fail — *"not in coverage report"* (a real instrumentation gap) |
+
+So a PR that only adds fields to a TypeScript `interface` passes without weakening the gate: add real logic to that same file later and its executable lines are measured and gated as usual.
 
 ### Custom test patterns
 

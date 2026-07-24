@@ -240,6 +240,7 @@ class TestRunPipeline:
             model="openai/gpt-5-mini",
             token="ghp_fake",
             confidence_threshold=0.7,
+            unmeasurable_files=set(),
         )
 
     @patch("src.main.run_layer3")
