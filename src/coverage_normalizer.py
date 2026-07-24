@@ -101,6 +101,22 @@ def _extract_clover_paths(root: ET.Element) -> list[str]:
     return paths
 
 
+def _extract_clover_report_paths(root: ET.Element) -> list[str]:
+    """Extract every path candidate from a Clover XML tree.
+
+    Deliberately returns BOTH attributes of each <file>, where
+    _extract_clover_paths() prefers "name": reporters disagree on which one is
+    fully qualified. PHPUnit puts the full path in name=; Jest's clover reporter
+    puts only the basename there and the real path in path=. A presence check
+    needs whichever attribute is qualified, so it takes both and lets
+    is_in_report() do the matching.
+    """
+    paths: list[str] = []
+    for file_elem in root.findall(".//file"):
+        paths.extend(val for attr in ("name", "path") if (val := file_elem.get(attr)))
+    return paths
+
+
 def _is_absolute_path(path: str) -> bool:
     """Check for a POSIX ("/x") or Windows ("C:/x", "C:\\x") absolute path."""
     return path.startswith("/") or (len(path) >= 3 and path[1] == ":" and path[2] in ("/", "\\"))
@@ -299,7 +315,7 @@ def extract_reported_files(filepath: str) -> set[str]:
             return set()
         fmt = detect_format(filepath)
         if fmt == CoverageFormat.CLOVER:
-            raw = _extract_clover_paths(root)
+            raw = _extract_clover_report_paths(root)
         elif fmt == CoverageFormat.COBERTURA:
             raw = _extract_cobertura_paths(root)
         elif fmt == CoverageFormat.JACOCO:
