@@ -669,6 +669,31 @@ _COBERTURA_REPORT = """<?xml version="1.0" ?>
 </coverage>
 """
 
+# Jest/istanbul shape: basename in name=, real path in path=.
+_CLOVER_JEST_REPORT = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000" clover="3.2.0">
+  <project timestamp="1700000000">
+    <file name="types.ts" path="/home/runner/work/app/app/src/bruno/types.ts">
+      <metrics statements="3"/>
+    </file>
+    <file name="request.ts" path="/home/runner/work/app/app/src/bruno/request.ts">
+      <metrics statements="40"/>
+    </file>
+  </project>
+</coverage>
+"""
+
+# PHPUnit shape: full path in name=, no path= attribute at all.
+_CLOVER_PHPUNIT_REPORT = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000">
+  <project timestamp="1700000000">
+    <file name="/var/www/app/lib/AuthCookie.php">
+      <line num="10" type="stmt" count="1"/>
+    </file>
+  </project>
+</coverage>
+"""
+
 _COBERTURA_SCOPED_REPORT = """<?xml version="1.0" ?>
 <coverage>
   <sources><source>/repo/src</source></sources>
@@ -746,6 +771,23 @@ class TestExtractReportedFiles:
             "src/bruno/types.ts",
             "src/bruno/request.ts",
         }
+
+    def test_clover_reads_path_attribute_when_name_is_a_basename(self, tmp_path):
+        # Jest's clover reporter writes name="types.ts" path="/abs/.../types.ts".
+        # Reading only name= yields a bare basename, which is_in_report()
+        # deliberately refuses to match — so the qualified path= must be taken too.
+        report = tmp_path / "clover.xml"
+        report.write_text(_CLOVER_JEST_REPORT)
+        reported = extract_reported_files(str(report))
+        assert "/home/runner/work/app/app/src/bruno/types.ts" in reported
+        assert is_in_report("src/bruno/types.ts", reported) is True
+
+    def test_clover_still_reads_name_when_it_is_qualified(self, tmp_path):
+        # PHPUnit puts the full path in name= and omits path= entirely.
+        report = tmp_path / "clover.xml"
+        report.write_text(_CLOVER_PHPUNIT_REPORT)
+        reported = extract_reported_files(str(report))
+        assert is_in_report("lib/AuthCookie.php", reported) is True
 
     def test_cobertura_joins_source_roots(self, tmp_path):
         # coverage.py run as `--cov=src` emits bare filenames plus a <source>
