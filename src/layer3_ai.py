@@ -114,6 +114,7 @@ def evaluate_file_shortcut(
     coverage_details: dict[str, float] | None,
     coverage_threshold: float,
     test_relevance: Relevance,
+    unmeasurable_files: set[str] | None = None,
 ) -> Verdict | None:
     """Apply the 8-gate deterministic truth table to a single source file.
 
@@ -127,6 +128,8 @@ def evaluate_file_shortcut(
         coverage_details: Per-file coverage percentages from L1, or None.
         coverage_threshold: Minimum coverage % to auto-pass.
         test_relevance: Tri-state relevance computed by compute_test_relevance().
+        unmeasurable_files: Files L1 found in the coverage report but absent
+            from diff-cover's src_stats — no executable lines changed.
 
     Returns:
         A Verdict if a shortcut applies, or None to fall through to AI.
@@ -135,8 +138,13 @@ def evaluate_file_shortcut(
     if is_deleted:
         return Verdict.SKIP
 
-    # Gate 2: Whitespace/comment-only diffs don't need tests.
+    # Gate 2: Nothing testable changed. Either the diff is whitespace/comments
+    # only, or L1 proved the file is instrumented yet contributed no executable
+    # changed lines (type declarations, interface members). Neither is coverable,
+    # so neither may reach Gate 4 — which would FAIL it for having 0% coverage.
     if is_trivial_diff(diff):
+        return Verdict.SKIP
+    if unmeasurable_files and source_file in unmeasurable_files:
         return Verdict.SKIP
 
     has_coverage = coverage_details is not None and source_file in coverage_details
@@ -909,6 +917,7 @@ def run_layer3(
     model: str,
     token: str,
     confidence_threshold: float,
+    unmeasurable_files: set[str] | None = None,
 ) -> LayerResult:
     """Run the full Layer 3 evaluation pipeline.
 
@@ -949,6 +958,7 @@ def run_layer3(
         verdict = evaluate_file_shortcut(
             source_file, diff, is_deleted,
             coverage_details, coverage_threshold, relevance,
+            unmeasurable_files,
         )
         if verdict is not None:
             per_file_verdicts[source_file] = verdict
@@ -956,6 +966,8 @@ def run_layer3(
                 reason = "shortcut → deleted file"
             elif is_trivial_diff(diff):
                 reason = "shortcut → trivial change (whitespace/comments only)"
+            elif unmeasurable_files and source_file in unmeasurable_files:
+                reason = "shortcut → in coverage report, but no executable lines changed"
             elif verdict == Verdict.PASS:
                 cov = coverage_details[source_file] if coverage_details else 0.0
                 reason = f"shortcut → coverage {cov:.0f}% ≥ {coverage_threshold:.0f}%"

@@ -21,6 +21,17 @@ _SAMPLE_SRC_STATS_JSON = (
 )
 
 
+# A real Clover report: both files instrumented, so report-presence is provable.
+_CLOVER_WITH_TYPES = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000" clover="3.2.0">
+  <project timestamp="1700000000">
+    <file name="src/bruno/types.ts"><metrics statements="0"/></file>
+    <file name="src/bruno/request.ts"><metrics statements="12"/></file>
+  </project>
+</coverage>
+"""
+
+
 class TestConstants:
     def test_diff_cover_timeout_value(self):
         assert _DIFF_COVER_TIMEOUT == 60
@@ -141,6 +152,45 @@ class TestRunLayer1:
             fv.file == "src/new_feature.py" and fv.verdict == Verdict.FAIL
             for fv in result.file_verdicts
         )
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_absent_but_present_in_report_passes(self, mock_cov, tmp_path):
+        # types.ts is instrumented and reported, but its diff touched only
+        # interface members, so diff-cover leaves it out of src_stats. Nothing
+        # executable changed -> nothing to cover -> PASS, not a coverage gap.
+        cov = tmp_path / "clover.xml"
+        cov.write_text(_CLOVER_WITH_TYPES)
+        mock_cov.return_value = (100.0, {"src/bruno/request.ts": 100.0}, "")
+        result = run_layer1(
+            coverage_files=[str(cov)],
+            threshold=95,
+            diff_files=["src/bruno/request.ts", "src/bruno/types.ts"],
+        )
+        assert result.verdict == Verdict.PASS
+        assert result.short_circuit is True
+        assert result.unmeasurable_files == {"src/bruno/types.ts"}
+        fv = next(f for f in result.file_verdicts if f.file == "src/bruno/types.ts")
+        assert fv.verdict == Verdict.PASS
+        assert "no executable lines changed" in fv.reason
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_absent_and_missing_from_report_still_fails(self, mock_cov, tmp_path):
+        # Same absence, different cause: the file is nowhere in the report, so
+        # it is genuinely un-instrumented. That stays a FAIL.
+        cov = tmp_path / "clover.xml"
+        cov.write_text(_CLOVER_WITH_TYPES)
+        mock_cov.return_value = (100.0, {"src/bruno/request.ts": 100.0}, "")
+        result = run_layer1(
+            coverage_files=[str(cov)],
+            threshold=95,
+            diff_files=["src/bruno/request.ts", "src/bruno/untracked.ts"],
+        )
+        assert result.verdict == Verdict.FAIL
+        assert result.short_circuit is False
+        assert result.unmeasurable_files == set()
+        fv = next(f for f in result.file_verdicts if f.file == "src/bruno/untracked.ts")
+        assert fv.verdict == Verdict.FAIL
+        assert fv.reason == "not in coverage report"
 
     @patch("src.layer1_coverage._compute_diff_coverage")
     def test_pass_exactly_at_threshold(self, mock_cov, tmp_path):

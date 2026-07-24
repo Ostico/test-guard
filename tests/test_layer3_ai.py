@@ -567,6 +567,54 @@ class TestRunLayer3:
         fv = {v.file: v for v in result.file_verdicts}["src/user.py"]
         assert "relevant tests exist but insufficient" in fv.reason
 
+    @patch("src.layer3_ai._call_github_models")
+    def test_unmeasurable_file_skips_instead_of_failing_gate_4(
+        self, mock_call: MagicMock
+    ):
+        # Gate 2: L1 proved the file is in the coverage report but contributed
+        # no executable changed lines (type declarations). Without this, Gate 4
+        # would read "absent from coverage_details" as 0% and hard-FAIL it.
+        diff = "+  /** doc */\n+  readonly scriptMode?: 'append' | 'replace'"
+        result = run_layer3(
+            source_diffs={"src/bruno/types.ts": diff},
+            deleted_files=set(),
+            test_diffs={},
+            l2_matched_tests={},
+            coverage_details={"src/bruno/request.ts": 100.0},
+            coverage_threshold=95.0,
+            model="openai/gpt-5-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+            unmeasurable_files={"src/bruno/types.ts"},
+        )
+        mock_call.assert_not_called()
+        assert result.verdict != Verdict.FAIL
+        fv = {v.file: v for v in result.file_verdicts}["src/bruno/types.ts"]
+        assert fv.verdict == Verdict.SKIP
+        assert "no executable lines changed" in fv.reason
+
+    @patch("src.layer3_ai._call_github_models")
+    def test_file_not_marked_unmeasurable_still_fails_gate_4(
+        self, mock_call: MagicMock
+    ):
+        # Same shape, but L1 did not vouch for the file -> Gate 4 still fires.
+        diff = "+  readonly scriptMode?: 'append' | 'replace'"
+        result = run_layer3(
+            source_diffs={"src/bruno/types.ts": diff},
+            deleted_files=set(),
+            test_diffs={},
+            l2_matched_tests={},
+            coverage_details={"src/bruno/request.ts": 100.0},
+            coverage_threshold=95.0,
+            model="openai/gpt-5-mini",
+            token="ghp_fake",
+            confidence_threshold=0.7,
+        )
+        mock_call.assert_not_called()
+        assert result.verdict == Verdict.FAIL
+        fv = {v.file: v for v in result.file_verdicts}["src/bruno/types.ts"]
+        assert fv.verdict == Verdict.FAIL
+
 
 class TestCallGithubModels:
     @patch("src.layer3_ai.OpenAI")

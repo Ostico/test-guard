@@ -5,6 +5,8 @@ from src.coverage_normalizer import (
     CoverageFormat,
     detect_format,
     detect_path_prefix,
+    extract_reported_files,
+    is_in_report,
     normalize_coverage_file,
 )
 
@@ -642,3 +644,125 @@ class TestRealWorldFormats:
         lines = clazz.findall(".//line")
         assert len(lines) == 4
         assert lines[2].get("hits") == "0"
+
+
+_CLOVER_REPORT = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000" clover="3.2.0">
+  <project timestamp="1700000000">
+    <file name="src/bruno/types.ts"><metrics statements="0"/></file>
+    <file name="src/bruno/request.ts"><metrics statements="12"/></file>
+  </project>
+</coverage>
+"""
+
+_COBERTURA_REPORT = """<?xml version="1.0" ?>
+<coverage>
+  <packages>
+    <package name="src">
+      <classes>
+        <class filename="src/models.py" name="models"/>
+        <class filename="./src/config.py" name="config"/>
+      </classes>
+    </package>
+  </packages>
+</coverage>
+"""
+
+_JACOCO_REPORT = """<?xml version="1.0" encoding="UTF-8"?>
+<report name="app">
+  <package name="com/example/svc">
+    <sourcefile name="Handler.java"/>
+    <sourcefile name="Types.java"/>
+  </package>
+</report>
+"""
+
+_LCOV_REPORT = """TN:
+SF:src/bruno/types.ts
+DA:1,1
+end_of_record
+SF:./src/bruno/request.ts
+DA:1,1
+end_of_record
+"""
+
+
+class TestExtractReportedFiles:
+    def test_clover_lists_every_file(self, tmp_path):
+        report = tmp_path / "clover.xml"
+        report.write_text(_CLOVER_REPORT)
+        assert extract_reported_files(str(report)) == {
+            "src/bruno/types.ts",
+            "src/bruno/request.ts",
+        }
+
+    def test_cobertura_lists_classes_and_strips_dot_slash(self, tmp_path):
+        report = tmp_path / "cobertura.xml"
+        report.write_text(_COBERTURA_REPORT)
+        assert extract_reported_files(str(report)) == {
+            "src/models.py",
+            "src/config.py",
+        }
+
+    def test_jacoco_joins_package_and_sourcefile(self, tmp_path):
+        report = tmp_path / "jacoco.xml"
+        report.write_text(_JACOCO_REPORT)
+        assert extract_reported_files(str(report)) == {
+            "com/example/svc/Handler.java",
+            "com/example/svc/Types.java",
+        }
+
+    def test_lcov_reads_sf_records(self, tmp_path):
+        report = tmp_path / "lcov.info"
+        report.write_text(_LCOV_REPORT)
+        assert extract_reported_files(str(report)) == {
+            "src/bruno/types.ts",
+            "src/bruno/request.ts",
+        }
+
+    def test_unknown_xml_format_returns_empty(self, tmp_path):
+        report = tmp_path / "other.xml"
+        report.write_text("<something/>")
+        assert extract_reported_files(str(report)) == set()
+
+    def test_malformed_xml_returns_empty(self, tmp_path):
+        report = tmp_path / "broken.xml"
+        report.write_text("<coverage><project>")
+        assert extract_reported_files(str(report)) == set()
+
+    def test_unsupported_extension_returns_empty(self, tmp_path):
+        report = tmp_path / "coverage.txt"
+        report.write_text("SF:src/foo.py\n")
+        assert extract_reported_files(str(report)) == set()
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        assert extract_reported_files(str(tmp_path / "nope.xml")) == set()
+
+
+class TestIsInReport:
+    def test_exact_match(self):
+        assert is_in_report("src/foo.py", {"src/foo.py"}) is True
+
+    def test_no_match(self):
+        assert is_in_report("src/foo.py", {"src/bar.py"}) is False
+
+    def test_empty_report(self):
+        assert is_in_report("src/foo.py", set()) is False
+
+    def test_report_path_keeps_container_prefix(self):
+        # Prefix normalization can fail (e.g. no diff file matched); a longer
+        # report path must still resolve to the git-relative one.
+        assert is_in_report("src/foo.py", {"/app/src/foo.py"}) is True
+
+    def test_shorter_package_qualified_report_path_matches(self):
+        # JaCoCo emits "com/foo/Bar.java" for "src/main/java/com/foo/Bar.java".
+        assert is_in_report(
+            "src/main/java/com/foo/Bar.java", {"com/foo/Bar.java"}
+        ) is True
+
+    def test_bare_basename_does_not_match(self):
+        # Guards against a same-named file in an unrelated directory.
+        assert is_in_report("src/deep/nested/Bar.java", {"Bar.java"}) is False
+
+    def test_partial_segment_does_not_match(self):
+        assert is_in_report("src/foo.py", {"src/notfoo.py"}) is False

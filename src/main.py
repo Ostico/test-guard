@@ -144,6 +144,9 @@ def run_pipeline(config: Config) -> Report:
         model=config.ai_model,
         token=config.github_token,
         confidence_threshold=config.ai_confidence_threshold,
+        # L1 proved these are instrumented but contributed no executable changed
+        # lines, so Gate 2 skips them instead of Gate 4 failing them at 0%.
+        unmeasurable_files=l1.unmeasurable_files,
     )
     report.layers.append(l3)
 
