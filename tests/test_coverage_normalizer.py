@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 from src.coverage_normalizer import (
@@ -668,6 +669,32 @@ _COBERTURA_REPORT = """<?xml version="1.0" ?>
 </coverage>
 """
 
+_COBERTURA_SCOPED_REPORT = """<?xml version="1.0" ?>
+<coverage>
+  <sources><source>/repo/src</source></sources>
+  <packages>
+    <package name=".">
+      <classes>
+        <class filename="main.py" name="main"/>
+      </classes>
+    </package>
+  </packages>
+</coverage>
+"""
+
+_COBERTURA_ABSOLUTE_REPORT = """<?xml version="1.0" ?>
+<coverage>
+  <sources><source>/repo/src</source></sources>
+  <packages>
+    <package name=".">
+      <classes>
+        <class filename="/repo/src/main.py" name="main"/>
+      </classes>
+    </package>
+  </packages>
+</coverage>
+"""
+
 _JACOCO_REPORT = """<?xml version="1.0" encoding="UTF-8"?>
 <report name="app">
   <package name="com/example/svc">
@@ -720,6 +747,29 @@ class TestExtractReportedFiles:
             "src/bruno/request.ts",
         }
 
+    def test_cobertura_joins_source_roots(self, tmp_path):
+        # coverage.py run as `--cov=src` emits bare filenames plus a <source>
+        # root. Without joining them, "src/main.py" looks un-instrumented.
+        report = tmp_path / "cobertura.xml"
+        report.write_text(_COBERTURA_SCOPED_REPORT)
+        reported = extract_reported_files(str(report))
+        assert "/repo/src/main.py" in reported
+        assert is_in_report("src/main.py", reported) is True
+
+    def test_cobertura_leaves_absolute_filenames_alone(self, tmp_path):
+        report = tmp_path / "cobertura.xml"
+        report.write_text(_COBERTURA_ABSOLUTE_REPORT)
+        assert extract_reported_files(str(report)) == {"/repo/src/main.py"}
+
+    def test_missing_lcov_file_returns_empty(self, tmp_path):
+        assert extract_reported_files(str(tmp_path / "absent.info")) == set()
+
+    def test_unreadable_lcov_directory_returns_empty(self, tmp_path):
+        # A directory named like a tracefile makes open() raise IsADirectoryError.
+        as_dir = tmp_path / "coverage.info"
+        as_dir.mkdir()
+        assert extract_reported_files(str(as_dir)) == set()
+
     def test_unknown_xml_format_returns_empty(self, tmp_path):
         report = tmp_path / "other.xml"
         report.write_text("<something/>")
@@ -766,3 +816,28 @@ class TestIsInReport:
 
     def test_partial_segment_does_not_match(self):
         assert is_in_report("src/foo.py", {"src/notfoo.py"}) is False
+
+
+class TestParseFailureFallbacks:
+    def test_cobertura_class_without_filename_is_skipped(self, tmp_path):
+        report = tmp_path / "cobertura.xml"
+        report.write_text(
+            '<?xml version="1.0" ?>'
+            "<coverage><packages><package name=\".\"><classes>"
+            '<class name="nameless"/>'
+            '<class filename="src/real.py" name="real"/>'
+            "</classes></package></packages></coverage>"
+        )
+        assert extract_reported_files(str(report)) == {"src/real.py"}
+
+    def test_clover_parse_error_returns_original_path(self, tmp_path):
+        # detect_format() swallows ParseError, so normalize_coverage_file()'s own
+        # Clover re-parse can only fail if the file changes underneath it. Forced
+        # here to pin the fallback: hand back the original path, never crash.
+        report = tmp_path / "clover.xml"
+        report.write_text("<coverage><project>")
+        with patch(
+            "src.coverage_normalizer.detect_format",
+            return_value=CoverageFormat.CLOVER,
+        ):
+            assert normalize_coverage_file(str(report), ["src/foo.py"]) == str(report)

@@ -101,9 +101,38 @@ def _extract_clover_paths(root: ET.Element) -> list[str]:
     return paths
 
 
+def _is_absolute_path(path: str) -> bool:
+    """Check for a POSIX ("/x") or Windows ("C:/x", "C:\\x") absolute path."""
+    return path.startswith("/") or (len(path) >= 3 and path[1] == ":" and path[2] in ("/", "\\"))
+
+
 def _extract_cobertura_paths(root: ET.Element) -> list[str]:
-    """Extract all source paths from a Cobertura XML tree."""
-    return [fname for fname in (c.get("filename", "") for c in root.findall(".//class")) if fname]
+    """Extract all source paths from a Cobertura XML tree.
+
+    <class filename="..."> is relative to the <sources><source> roots whenever
+    the report was scoped to a subdirectory: coverage.py run as `--cov=src`
+    emits filename="main.py" plus source=".../src", never "src/main.py". Each
+    root is joined on so the result is comparable to a git path. Filenames that
+    are already absolute are left alone.
+    """
+    sources = [
+        stripped
+        for stripped in (
+            (s.text or "").replace("\\", "/").rstrip("/") for s in root.findall("sources/source")
+        )
+        if stripped
+    ]
+
+    paths: list[str] = []
+    for clazz in root.findall(".//class"):
+        fname = (clazz.get("filename") or "").replace("\\", "/")
+        if not fname:
+            continue
+        paths.append(fname)
+        if _is_absolute_path(fname):
+            continue
+        paths.extend(f"{source}/{fname}" for source in sources)
+    return paths
 
 
 def _extract_jacoco_paths(root: ET.Element) -> list[str]:
