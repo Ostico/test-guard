@@ -142,7 +142,12 @@ def run_pipeline(config: Config) -> Report:
         coverage_details=l1.coverage_details,
         coverage_threshold=config.coverage_threshold,
         model=config.ai_model,
-        token=config.github_token,
+        token=config.ai_api_key,
+        base_url=config.ai_base_url,
+        reasoning_effort=config.ai_reasoning_effort,
+        temperature=config.ai_temperature,
+        max_output_tokens=config.ai_max_output_tokens,
+        max_input_tokens=config.ai_max_input_tokens,
         confidence_threshold=config.ai_confidence_threshold,
         # L1 proved these are instrumented but contributed no executable changed
         # lines, so Gate 2 skips them instead of Gate 4 failing them at 0%.
@@ -164,6 +169,8 @@ def _attach_summary(
     """Generate and attach summary to report if verdict is WARNING/FAIL."""
     if report.overall_verdict in (Verdict.PASS, Verdict.SKIP):
         return
+    if not config.ai_api_key:
+        return
 
     report.summary = generate_summary(
         report=report,
@@ -171,7 +178,8 @@ def _attach_summary(
         test_files_in_pr=test_files_in_pr,
         coverage_files_provided=bool(config.coverage_files),
         model=config.ai_model,
-        token=config.github_token,
+        token=config.ai_api_key,
+        base_url=config.ai_base_url,
     )
 
 

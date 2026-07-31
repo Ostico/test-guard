@@ -2,7 +2,7 @@
 
 Evaluates each source file through an 8-gate shortcut truth table using
 coverage data from L1 and test-match data from L2. Files that cannot be
-resolved deterministically fall through to the GitHub Models AI for a
+resolved deterministically fall through to the configured AI provider for a
 structured JSON verdict with confidence-based downgrade.
 
 Flow:
@@ -31,6 +31,11 @@ from openai.types.shared_params.response_format_json_schema import JSONSchema
 from unidiff import PatchSet
 from unidiff.errors import UnidiffParseError
 
+from src.config import DEFAULT_AI_BASE_URL as _DEFAULT_AI_BASE_URL
+from src.config import DEFAULT_AI_MAX_INPUT_TOKENS as _DEFAULT_AI_MAX_INPUT_TOKENS
+from src.config import DEFAULT_AI_MAX_OUTPUT_TOKENS as _DEFAULT_AI_MAX_OUTPUT_TOKENS
+from src.config import DEFAULT_AI_REASONING_EFFORT as _DEFAULT_AI_REASONING_EFFORT
+from src.config import DEFAULT_AI_TEMPERATURE as _DEFAULT_AI_TEMPERATURE
 from src.diff_utils import is_trivial_diff
 from src.models import FileVerdict, LayerResult, Verdict
 
@@ -237,7 +242,11 @@ def _build_ai_prompt(
     coverage_details: dict[str, float] | None,
     coverage_threshold: float,
     matched_tests: dict[str, str | list[str] | None],
-    max_diff_chars: int = 10_000,
+    # Both resolved at call time rather than as def-time defaults: max_diff_chars
+    # is derived from token_budget, and the budget constant is defined further
+    # down this module, so a def-time default would NameError.
+    max_diff_chars: int | None = None,
+    token_budget: int | None = None,
 ) -> str:
     """Build the structured Markdown user prompt for the AI batch.
 
@@ -252,6 +261,17 @@ def _build_ai_prompt(
     """
     if not files_for_ai:
         return ""
+
+    if token_budget is None:
+        token_budget = _user_prompt_budget()
+    # Two independent truncations guard the prompt: this per-diff character cap
+    # and the whole-diff shedding below. Raising only the token budget changes
+    # nothing while the char cap still clips every large diff, so derive the cap
+    # from the budget — half of it, leaving room for other files in the batch,
+    # and never below the historical 10k floor. An explicit value always wins:
+    # the 413 retry passes a deliberately smaller cap to shrink the request.
+    if max_diff_chars is None:
+        max_diff_chars = max(10_000, token_budget * _CHARS_PER_TOKEN // 2)
 
     # Build a reverse map: test file → list of source files it is matched to.
     # Used to annotate each test diff in the prompt so the AI knows which
@@ -323,7 +343,7 @@ def _build_ai_prompt(
     # input cap even when the aggregate test payload is large. The evidence
     # banner (recomputed in assemble) tells the model what was dropped.
     kept = list(test_entries)
-    while kept and _estimate_tokens(assemble(kept)) > _USER_PROMPT_TOKEN_BUDGET:
+    while kept and _estimate_tokens(assemble(kept)) > token_budget:
         victim = max(kept, key=lambda e: (bool(e["is_candidate"]), int(e["cost"])))
         kept.remove(victim)
     return assemble(kept)
@@ -601,18 +621,34 @@ def _sanitize_diff(
 # Default model chain: try gpt-4.1-mini first, fall back to gpt-4.1-nano on 403.
 # When the user explicitly sets ai-model to something other than the chain head,
 # a single attempt is made with that model (no fallback).
+#
+# IDs are unprefixed (OpenAI style). Providers that namespace by publisher
+# (OpenRouter: "openai/gpt-4.1-mini") need ai-model set explicitly.
 _DEFAULT_FALLBACK_CHAIN: tuple[str, ...] = (
-    "openai/gpt-4.1-mini",
-    "openai/gpt-4.1-nano",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
 )
 
+# Endpoint/model pairs that rejected `reasoning_effort`. Populated at runtime
+# so the fallback costs one extra request per pair, not one per batch.
+_REASONING_EFFORT_UNSUPPORTED: set[tuple[str, str]] = set()
+
 _CHARS_PER_TOKEN = 3
-_INPUT_TOKEN_LIMIT = 8000
+_MAX_INPUT_TOKENS = _DEFAULT_AI_MAX_INPUT_TOKENS
 _SYSTEM_OVERHEAD_TOKENS = 800   # system prompt + JSON schema overhead
 _SAFETY_FACTOR = 0.85
-_USER_PROMPT_TOKEN_BUDGET = int(
-    (_INPUT_TOKEN_LIMIT - _SYSTEM_OVERHEAD_TOKENS) * _SAFETY_FACTOR
-)  # = 6120 tokens
+
+
+def _user_prompt_budget(max_input_tokens: int = _MAX_INPUT_TOKENS) -> int:
+    """Tokens available for the user prompt at a given input budget.
+
+    Subtracts the system prompt and schema, then applies a safety factor
+    because token counts here are estimated from characters, not measured.
+    """
+    return int((max_input_tokens - _SYSTEM_OVERHEAD_TOKENS) * _SAFETY_FACTOR)
+
+
+_USER_PROMPT_TOKEN_BUDGET = _user_prompt_budget()  # = 6120 tokens at 8000
 _FILE_ENTRY_OVERHEAD_TOKENS = 25  # markdown headers, code fences per file
 _BATCH_OVERHEAD_TOKENS = 30       # section headers per batch prompt
 _RETRY_MAX_DIFF_CHARS = 3000      # tighter truncation on 413 retry
@@ -755,6 +791,19 @@ def _is_retryable_size_error(exc: Exception) -> bool:
     return False
 
 
+def _is_unsupported_reasoning_effort_error(exc: Exception) -> bool:
+    """True when the endpoint rejected the ``reasoning_effort`` parameter.
+
+    Non-reasoning models reject it in provider-specific ways — OpenAI answers
+    "Unsupported value", Azure "Unrecognized request argument", others
+    "Unknown parameter" — but every variant names the parameter, so match on
+    that rather than on a message template.
+    """
+    if isinstance(exc, APIStatusError) and exc.status_code in (400, 404, 422):
+        return "reasoning_effort" in str(exc).lower()
+    return False
+
+
 def _validate_batch_verdicts(
     verdicts: list[FileVerdict],
     batch_files: list[str],
@@ -804,6 +853,11 @@ def _call_ai_for_batch(
     model: str,
     system_prompt: str,
     token: str,
+    base_url: str = _DEFAULT_AI_BASE_URL,
+    reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
+    temperature: float = _DEFAULT_AI_TEMPERATURE,
+    max_output_tokens: int = _DEFAULT_AI_MAX_OUTPUT_TOKENS,
+    max_input_tokens: int = _DEFAULT_AI_MAX_INPUT_TOKENS,
 ) -> tuple[str | None, Exception | None]:
     """Call the AI for a single batch with one model.
 
@@ -814,12 +868,17 @@ def _call_ai_for_batch(
     batch_test_diffs = _filter_test_diffs_for_batch(
         batch_files, test_diffs, matched_tests,
     )
+    token_budget = _user_prompt_budget(max_input_tokens)
     user_prompt = _build_ai_prompt(
         batch_files, source_diffs, batch_test_diffs,
         coverage_details, coverage_threshold, matched_tests,
+        token_budget=token_budget,
     )
     try:
-        raw = _call_github_models(model, system_prompt, user_prompt, token)
+        raw = _call_ai_provider(
+            model, system_prompt, user_prompt, token, base_url,
+            reasoning_effort, temperature, max_output_tokens,
+        )
         return raw, None
     except Exception as exc:
         if _is_retryable_size_error(exc):
@@ -827,10 +886,11 @@ def _call_ai_for_batch(
                 batch_files, source_diffs, batch_test_diffs,
                 coverage_details, coverage_threshold, matched_tests,
                 max_diff_chars=_RETRY_MAX_DIFF_CHARS,
+                token_budget=token_budget,
             )
             try:
-                raw = _call_github_models(
-                    model, system_prompt, user_prompt, token,
+                raw = _call_ai_provider(
+                    model, system_prompt, user_prompt, token, base_url,
                 )
                 return raw, None
             except Exception as retry_exc:
@@ -838,26 +898,82 @@ def _call_ai_for_batch(
         return None, exc
 
 
-def _call_github_models(
+def _call_ai_provider(
     model: str,
     system_prompt: str,
     user_prompt: str,
     token: str,
+    base_url: str = _DEFAULT_AI_BASE_URL,
+    reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
+    temperature: float = _DEFAULT_AI_TEMPERATURE,
+    max_output_tokens: int = _DEFAULT_AI_MAX_OUTPUT_TOKENS,
 ) -> str:
-    """Call GitHub Models API and return the raw response text."""
+    """Call an OpenAI-compatible inference endpoint, return raw response text.
+
+    ``base_url`` is provider-agnostic: OpenAI, Azure AI Foundry, OpenRouter,
+    or any local gateway speaking the same protocol. GitHub Models used to be
+    hardcoded here; it was retired on 2026-07-30.
+
+    ``reasoning_effort`` defaults to ``"none"`` to keep thinking models from
+    spending the 2048-token output budget on a thought trace and truncating
+    the JSON verdict. Non-reasoning models (OpenAI's gpt-4.1 family) reject
+    the parameter outright, so an unsupported-parameter rejection is retried
+    once without it and the (endpoint, model) pair is remembered.
+    """
     client = OpenAI(
-        base_url="https://models.github.ai/inference",
+        base_url=base_url,
         api_key=token,
     )
     messages = [
         ChatCompletionSystemMessageParam(role="system", content=system_prompt),
         ChatCompletionUserMessageParam(role="user", content=user_prompt),
     ]
-    response = client.chat.completions.create(
+    extra: dict[str, object] = {}
+    if reasoning_effort and (base_url, model) not in _REASONING_EFFORT_UNSUPPORTED:
+        extra["reasoning_effort"] = reasoning_effort
+
+    try:
+        response = _create_completion(
+            client, model, messages, extra, temperature, max_output_tokens,
+        )
+    except Exception as exc:
+        if not extra or not _is_unsupported_reasoning_effort_error(exc):
+            raise
+        _REASONING_EFFORT_UNSUPPORTED.add((base_url, model))
+        response = _create_completion(client, model, messages, {}, temperature, max_output_tokens)
+
+    if not response.choices:
+        return ""
+
+    choice = response.choices[0]
+    content = choice.message.content or ""
+    # A reasoning model can spend the whole output cap on its thought trace and
+    # return finish_reason="length" with empty content. That parses as SKIP at
+    # confidence 0.0, which is indistinguishable from a model that simply had
+    # nothing to say — so name the cause instead of degrading quietly.
+    if getattr(choice, "finish_reason", None) == "length" and not content.strip():
+        print(
+            f"::warning::{model} hit the {max_output_tokens}-token output cap before "
+            f"emitting a verdict — most likely the thought trace consumed it. "
+            f"Raise ai-max-output-tokens or lower ai-reasoning-effort."
+        )
+    return content
+
+
+def _create_completion(
+    client: OpenAI,
+    model: str,
+    messages: list[object],
+    extra: dict[str, object],
+    temperature: float = _DEFAULT_AI_TEMPERATURE,
+    max_output_tokens: int = _DEFAULT_AI_MAX_OUTPUT_TOKENS,
+) -> object:
+    """Issue the chat-completion request, with ``extra`` merged into kwargs."""
+    return client.chat.completions.create(
         model=model,
         messages=messages,
-        temperature=0.1,
-        max_tokens=2048,
+        temperature=temperature,
+        max_tokens=max_output_tokens,
         response_format=ResponseFormatJSONSchema(
             type="json_schema",
             json_schema=JSONSchema(
@@ -866,10 +982,8 @@ def _call_github_models(
                 schema=_VERDICT_SCHEMA,
             ),
         ),
+        **extra,
     )
-    if not response.choices:
-        return ""
-    return response.choices[0].message.content or ""
 
 
 def _parse_ai_response(
@@ -918,6 +1032,11 @@ def run_layer3(
     token: str,
     confidence_threshold: float,
     unmeasurable_files: set[str] | None = None,
+    base_url: str = _DEFAULT_AI_BASE_URL,
+    reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
+    temperature: float = _DEFAULT_AI_TEMPERATURE,
+    max_output_tokens: int = _DEFAULT_AI_MAX_OUTPUT_TOKENS,
+    max_input_tokens: int = _DEFAULT_AI_MAX_INPUT_TOKENS,
 ) -> LayerResult:
     """Run the full Layer 3 evaluation pipeline.
 
@@ -1030,6 +1149,8 @@ def run_layer3(
                         batch, source_diffs, test_diffs,
                         coverage_details, coverage_threshold, l2_matched_tests,
                         models[current_model_idx], system_prompt, token,
+                        base_url, reasoning_effort, temperature, max_output_tokens,
+                        max_input_tokens,
                     )
                     if raw is not None:
                         _, ai_confidence, batch_verdicts = _parse_ai_response(raw)

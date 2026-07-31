@@ -24,7 +24,36 @@ _DEFAULT_EXCLUDE = (
     "build.rs"
 )
 _DEFAULT_COVERAGE_THRESHOLD = 80
-_DEFAULT_AI_MODEL = "openai/gpt-4.1-mini"
+_DEFAULT_AI_MODEL = "gpt-4.1-mini"
+# Any OpenAI-compatible /v1 endpoint. GitHub Models (models.github.ai) was
+# retired on 2026-07-30 and is no longer a valid target.
+DEFAULT_AI_BASE_URL = "https://api.openai.com/v1"
+# "none" keeps thinking models from spending the output budget on a thought
+# trace and truncating the JSON verdict. Providers that reject the parameter
+# get it stripped automatically (see layer3_ai). Empty string never sends it.
+DEFAULT_AI_REASONING_EFFORT = "none"
+# 0.1 suits OpenAI-style models for a deterministic classification. Gemini 3.x
+# documents the opposite: it recommends its default of 1.0 and warns that
+# lowering temperature can cause looping or degraded reasoning, so that
+# provider needs this raised.
+DEFAULT_AI_TEMPERATURE = 0.1
+# A verdict payload is a few hundred tokens; the rest of this budget exists so
+# a reasoning model's thought trace cannot squeeze the JSON out. Thought tokens
+# are charged against the output cap, and when they exhaust it the API returns
+# finish_reason="length" with empty content — which parses as SKIP at
+# confidence 0.0. 8192 is the community-reported floor that avoids that with
+# thinking enabled; the cap is not a reservation, so unused headroom is free.
+# It stays well under the 65536 Gemini 3.x allows, because thought tokens are
+# billed as output and burn free-tier tokens/minute.
+DEFAULT_AI_MAX_OUTPUT_TOKENS = 8192
+# Client-side budget for the prompt we send, which drives batching and decides
+# how much diff evidence survives. 8000 was sized for GitHub Models' retired 8K
+# input cap, and it is now the binding constraint on evidence quality: a test
+# diff larger than the budget gets shed, and the prompt instructs the model to
+# treat omitted code as untested, producing false warnings. It stays
+# conservative by default because providers meter tokens per minute — Groq's
+# free tier allows only 8K/min — so raise it deliberately per provider.
+DEFAULT_AI_MAX_INPUT_TOKENS = 8000
 _DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.7
 _DEFAULT_AI_ENABLED_VALUES = ("true", "1", "yes")
 
@@ -161,7 +190,15 @@ class Config:
         test_patterns: Language-specific source-to-test file mappings.
         exclude_patterns: Glob patterns to skip (config files, docs, etc.).
         ai_enabled: Whether Layer 3 AI analysis is enabled.
-        ai_model: GitHub Models model ID (e.g., "openai/gpt-4.1-mini").
+        ai_model: Provider model ID (e.g., "gpt-4.1-mini"). Use the exact ID
+            the configured endpoint expects — OpenAI wants "gpt-4.1-mini",
+            OpenRouter wants "openai/gpt-4.1-mini".
+        ai_base_url: OpenAI-compatible inference endpoint.
+        ai_api_key: API key for that endpoint. Empty disables Layer 3's AI
+            phase (shortcut gates still run).
+        ai_reasoning_effort: Thinking budget hint sent to reasoning models
+            ("none", "minimal", "low", "medium", "high"). Empty sends nothing;
+            endpoints that reject the parameter get it stripped on retry.
         ai_confidence_threshold: AI FAIL verdicts below this become WARNING (0.0-1.0).
     """
 
@@ -183,6 +220,12 @@ class Config:
     ai_enabled: bool
     ai_model: str
     ai_confidence_threshold: float  # 0.0-1.0
+    ai_base_url: str = DEFAULT_AI_BASE_URL
+    ai_api_key: str = ""
+    ai_reasoning_effort: str = DEFAULT_AI_REASONING_EFFORT
+    ai_temperature: float = DEFAULT_AI_TEMPERATURE
+    ai_max_output_tokens: int = DEFAULT_AI_MAX_OUTPUT_TOKENS
+    ai_max_input_tokens: int = DEFAULT_AI_MAX_INPUT_TOKENS
 
 
 def _parse_custom_test_patterns(raw: str) -> dict[str, dict[str, str]]:
@@ -305,6 +348,48 @@ def parse_config() -> Config:
     # Layer 3: Parse AI configuration.
     ai_enabled = _env("AI-ENABLED", "true").lower() in _DEFAULT_AI_ENABLED_VALUES
     ai_model = _env("AI-MODEL", _DEFAULT_AI_MODEL)
+    ai_base_url = _env("AI-BASE-URL", DEFAULT_AI_BASE_URL)
+    # Provider API key. Deliberately NOT GITHUB_TOKEN: GitHub Models was
+    # retired on 2026-07-30 and a GitHub token authenticates nothing else.
+    ai_api_key = _env("AI-API-KEY", "")
+    ai_reasoning_effort = _env("AI-REASONING-EFFORT", DEFAULT_AI_REASONING_EFFORT)
+    temperature_raw = _env("AI-TEMPERATURE", str(DEFAULT_AI_TEMPERATURE))
+    try:
+        ai_temperature = float(temperature_raw)
+    except ValueError:
+        print(
+            f"::warning::Invalid ai-temperature '{temperature_raw}' — "
+            f"falling back to {DEFAULT_AI_TEMPERATURE}."
+        )
+        ai_temperature = DEFAULT_AI_TEMPERATURE
+
+    max_output_tokens_raw = _env("AI-MAX-OUTPUT-TOKENS", str(DEFAULT_AI_MAX_OUTPUT_TOKENS))
+    try:
+        ai_max_output_tokens = int(max_output_tokens_raw)
+    except ValueError:
+        print(
+            f"::warning::Invalid ai-max-output-tokens '{max_output_tokens_raw}' — "
+            f"falling back to {DEFAULT_AI_MAX_OUTPUT_TOKENS}."
+        )
+        ai_max_output_tokens = DEFAULT_AI_MAX_OUTPUT_TOKENS
+
+    input_limit_raw = _env("AI-MAX-INPUT-TOKENS", str(DEFAULT_AI_MAX_INPUT_TOKENS))
+    try:
+        ai_max_input_tokens = int(input_limit_raw)
+    except ValueError:
+        print(
+            f"::warning::Invalid ai-max-input-tokens '{input_limit_raw}' — "
+            f"falling back to {DEFAULT_AI_MAX_INPUT_TOKENS}."
+        )
+        ai_max_input_tokens = DEFAULT_AI_MAX_INPUT_TOKENS
+    if ai_enabled and not ai_api_key:
+        print(
+            "::warning::ai-enabled is true but ai-api-key is empty — Layer 3 "
+            "AI analysis disabled, falling back to Layer 1 + Layer 2. GitHub "
+            "Models was retired on 2026-07-30; set ai-api-key (plus "
+            "ai-base-url for non-OpenAI providers) to re-enable."
+        )
+        ai_enabled = False
     confidence_raw = _env(
         "AI-CONFIDENCE-THRESHOLD", str(_DEFAULT_AI_CONFIDENCE_THRESHOLD)
     )
@@ -330,5 +415,11 @@ def parse_config() -> Config:
         exclude_patterns=exclude_patterns,
         ai_enabled=ai_enabled,
         ai_model=ai_model,
+        ai_base_url=ai_base_url,
+        ai_api_key=ai_api_key,
+        ai_reasoning_effort=ai_reasoning_effort,
+        ai_temperature=ai_temperature,
+        ai_max_output_tokens=ai_max_output_tokens,
+        ai_max_input_tokens=ai_max_input_tokens,
         ai_confidence_threshold=ai_confidence_threshold,
     )
