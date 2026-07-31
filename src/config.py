@@ -24,7 +24,10 @@ _DEFAULT_EXCLUDE = (
     "build.rs"
 )
 _DEFAULT_COVERAGE_THRESHOLD = 80
-_DEFAULT_AI_MODEL = "openai/gpt-4.1-mini"
+_DEFAULT_AI_MODEL = "gpt-4.1-mini"
+# Any OpenAI-compatible /v1 endpoint. GitHub Models (models.github.ai) was
+# retired on 2026-07-30 and is no longer a valid target.
+DEFAULT_AI_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.7
 _DEFAULT_AI_ENABLED_VALUES = ("true", "1", "yes")
 
@@ -161,7 +164,12 @@ class Config:
         test_patterns: Language-specific source-to-test file mappings.
         exclude_patterns: Glob patterns to skip (config files, docs, etc.).
         ai_enabled: Whether Layer 3 AI analysis is enabled.
-        ai_model: GitHub Models model ID (e.g., "openai/gpt-4.1-mini").
+        ai_model: Provider model ID (e.g., "gpt-4.1-mini"). Use the exact ID
+            the configured endpoint expects — OpenAI wants "gpt-4.1-mini",
+            OpenRouter wants "openai/gpt-4.1-mini".
+        ai_base_url: OpenAI-compatible inference endpoint.
+        ai_api_key: API key for that endpoint. Empty disables Layer 3's AI
+            phase (shortcut gates still run).
         ai_confidence_threshold: AI FAIL verdicts below this become WARNING (0.0-1.0).
     """
 
@@ -183,6 +191,8 @@ class Config:
     ai_enabled: bool
     ai_model: str
     ai_confidence_threshold: float  # 0.0-1.0
+    ai_base_url: str = DEFAULT_AI_BASE_URL
+    ai_api_key: str = ""
 
 
 def _parse_custom_test_patterns(raw: str) -> dict[str, dict[str, str]]:
@@ -305,6 +315,18 @@ def parse_config() -> Config:
     # Layer 3: Parse AI configuration.
     ai_enabled = _env("AI-ENABLED", "true").lower() in _DEFAULT_AI_ENABLED_VALUES
     ai_model = _env("AI-MODEL", _DEFAULT_AI_MODEL)
+    ai_base_url = _env("AI-BASE-URL", DEFAULT_AI_BASE_URL)
+    # Provider API key. Deliberately NOT GITHUB_TOKEN: GitHub Models was
+    # retired on 2026-07-30 and a GitHub token authenticates nothing else.
+    ai_api_key = _env("AI-API-KEY", "")
+    if ai_enabled and not ai_api_key:
+        print(
+            "::warning::ai-enabled is true but ai-api-key is empty — Layer 3 "
+            "AI analysis disabled, falling back to Layer 1 + Layer 2. GitHub "
+            "Models was retired on 2026-07-30; set ai-api-key (plus "
+            "ai-base-url for non-OpenAI providers) to re-enable."
+        )
+        ai_enabled = False
     confidence_raw = _env(
         "AI-CONFIDENCE-THRESHOLD", str(_DEFAULT_AI_CONFIDENCE_THRESHOLD)
     )
@@ -330,5 +352,7 @@ def parse_config() -> Config:
         exclude_patterns=exclude_patterns,
         ai_enabled=ai_enabled,
         ai_model=ai_model,
+        ai_base_url=ai_base_url,
+        ai_api_key=ai_api_key,
         ai_confidence_threshold=ai_confidence_threshold,
     )

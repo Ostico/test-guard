@@ -26,6 +26,8 @@ def base_config():
         ai_enabled=True,
         ai_model="openai/gpt-5-mini",
         ai_confidence_threshold=0.7,
+        ai_base_url="https://api.openai.com/v1",
+        ai_api_key="sk-fake",
     )
 
 
@@ -238,7 +240,10 @@ class TestRunPipeline:
             coverage_details={"src/auth.py": 75.0},
             coverage_threshold=80,
             model="openai/gpt-5-mini",
-            token="ghp_fake",
+            # The provider key, never the GitHub token — the two are unrelated
+            # now that GitHub Models is retired.
+            token="sk-fake",
+            base_url="https://api.openai.com/v1",
             confidence_threshold=0.7,
             unmeasurable_files=set(),
         )

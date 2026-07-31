@@ -16,6 +16,8 @@ class TestParseConfig:
         monkeypatch.delenv("INPUT_AI-ENABLED", raising=False)
         monkeypatch.delenv("INPUT_AI-MODEL", raising=False)
         monkeypatch.delenv("INPUT_AI-CONFIDENCE-THRESHOLD", raising=False)
+        monkeypatch.delenv("INPUT_AI-BASE-URL", raising=False)
+        monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
         monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
         monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
@@ -24,7 +26,9 @@ class TestParseConfig:
         assert cfg.coverage_files == []
         assert cfg.coverage_threshold == 80
         assert cfg.ai_enabled is True
-        assert cfg.ai_model == "openai/gpt-4.1-mini"
+        assert cfg.ai_model == "gpt-4.1-mini"
+        assert cfg.ai_base_url == "https://api.openai.com/v1"
+        assert cfg.ai_api_key == "sk-fake"
         assert cfg.ai_confidence_threshold == 0.7
         assert cfg.github_token == "ghp_fake123"
         assert cfg.repo == "owner/repo"
@@ -47,6 +51,42 @@ class TestParseConfig:
         assert cfg.ai_model == "openai/gpt-4.1-mini"
         assert cfg.ai_confidence_threshold == 0.9
         assert cfg.exclude_patterns == ["*.md", "docs/**"]
+
+    def test_custom_endpoint_and_key(self, monkeypatch):
+        """ai-base-url / ai-api-key point Layer 3 at any OpenAI-compatible provider."""
+        monkeypatch.setenv("INPUT_AI-BASE-URL", "https://openrouter.ai/api/v1")
+        monkeypatch.setenv("INPUT_AI-API-KEY", "sk-or-abc")
+        monkeypatch.setenv("INPUT_AI-MODEL", "openai/gpt-4.1-mini")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        cfg = parse_config()
+        assert cfg.ai_base_url == "https://openrouter.ai/api/v1"
+        assert cfg.ai_api_key == "sk-or-abc"
+        # Publisher-prefixed IDs pass through untouched — OpenRouter needs them.
+        assert cfg.ai_model == "openai/gpt-4.1-mini"
+        assert cfg.ai_enabled is True
+
+    def test_missing_api_key_disables_ai(self, monkeypatch, capsys):
+        """No key means no AI phase: GITHUB_TOKEN is not a provider credential.
+
+        GitHub Models was retired 2026-07-30, so there is no endpoint a bare
+        GitHub token authenticates against. Degrade to L1+L2 with a warning
+        instead of failing every run with a 401/410.
+        """
+        monkeypatch.setenv("INPUT_AI-ENABLED", "true")
+        monkeypatch.delenv("INPUT_AI-API-KEY", raising=False)
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        cfg = parse_config()
+        assert cfg.ai_enabled is False
+        assert cfg.ai_api_key == ""
+        out = capsys.readouterr().out
+        assert "::warning::" in out
+        assert "ai-api-key" in out
 
     def _base_env(self, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")

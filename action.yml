@@ -27,8 +27,15 @@ inputs:
     description: 'Enable AI Layer 3 analysis (true/false).'
     default: 'true'
   ai-model:
-    description: 'GitHub Models model ID for AI analysis.'
-    default: 'openai/gpt-4.1-mini'
+    description: 'Model ID for AI analysis, exactly as the configured endpoint expects (OpenAI: "gpt-4.1-mini"; OpenRouter: "openai/gpt-4.1-mini").'
+    default: 'gpt-4.1-mini'
+  ai-base-url:
+    description: 'OpenAI-compatible inference endpoint. Examples: https://api.openai.com/v1, https://<resource>.services.ai.azure.com/openai/v1, https://openrouter.ai/api/v1. GitHub Models (models.github.ai) was retired on 2026-07-30 and no longer works.'
+    default: 'https://api.openai.com/v1'
+  ai-api-key:
+    description: 'API key for ai-base-url. Pass a secret, e.g. ${{ secrets.OPENAI_API_KEY }}. Required for Layer 3 — a GITHUB_TOKEN is not accepted by any of these providers. When empty, Layer 3 is skipped and the gate falls back to Layer 1 + Layer 2.'
+    required: false
+    default: ''
   ai-confidence-threshold:
     description: 'Minimum AI confidence to enforce fail verdict (0.0-1.0). Below this, fail becomes warning.'
     default: '0.7'
@@ -56,6 +63,8 @@ runs:
         INPUT_EXTRA-EXCLUDE-PATTERNS: ${{ inputs.extra-exclude-patterns }}
         INPUT_AI-ENABLED: ${{ inputs.ai-enabled }}
         INPUT_AI-MODEL: ${{ inputs.ai-model }}
+        INPUT_AI-BASE-URL: ${{ inputs.ai-base-url }}
+        INPUT_AI-API-KEY: ${{ inputs.ai-api-key }}
         INPUT_AI-CONFIDENCE-THRESHOLD: ${{ inputs.ai-confidence-threshold }}
         PYTHONPATH: ${{ github.action_path }}
       run: python ${{ github.action_path }}/src/main.py

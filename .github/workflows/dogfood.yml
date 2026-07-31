@@ -12,7 +12,7 @@ permissions:
   contents: read
   pull-requests: write
   statuses: write
-  models: read
+  # No `models: read` — it only ever gated GitHub Models, retired 2026-07-30.
 
 jobs:
   test-guard:
@@ -36,7 +36,10 @@ jobs:
         with:
           coverage-file: coverage.xml
           coverage-threshold: '100'
-          ai-model: 'openai/gpt-4.1-mini'
+          ai-model: 'gpt-4.1-mini'
+          # Layer 3 needs a provider key. Absent the secret, the gate degrades
+          # to Layer 1 + Layer 2 with a warning instead of failing.
+          ai-api-key: ${{ secrets.OPENAI_API_KEY }}
           # Repo-specific: benchmarks/ is a standalone perf harness, not product
           # code under test. Kept OUT of the shipped defaults on purpose — a
           # test-adequacy gate should not silently skip a code tree for every

@@ -2,7 +2,7 @@
 
 Evaluates each source file through an 8-gate shortcut truth table using
 coverage data from L1 and test-match data from L2. Files that cannot be
-resolved deterministically fall through to the GitHub Models AI for a
+resolved deterministically fall through to the configured AI provider for a
 structured JSON verdict with confidence-based downgrade.
 
 Flow:
@@ -31,6 +31,7 @@ from openai.types.shared_params.response_format_json_schema import JSONSchema
 from unidiff import PatchSet
 from unidiff.errors import UnidiffParseError
 
+from src.config import DEFAULT_AI_BASE_URL as _DEFAULT_AI_BASE_URL
 from src.diff_utils import is_trivial_diff
 from src.models import FileVerdict, LayerResult, Verdict
 
@@ -601,9 +602,12 @@ def _sanitize_diff(
 # Default model chain: try gpt-4.1-mini first, fall back to gpt-4.1-nano on 403.
 # When the user explicitly sets ai-model to something other than the chain head,
 # a single attempt is made with that model (no fallback).
+#
+# IDs are unprefixed (OpenAI style). Providers that namespace by publisher
+# (OpenRouter: "openai/gpt-4.1-mini") need ai-model set explicitly.
 _DEFAULT_FALLBACK_CHAIN: tuple[str, ...] = (
-    "openai/gpt-4.1-mini",
-    "openai/gpt-4.1-nano",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
 )
 
 _CHARS_PER_TOKEN = 3
@@ -804,6 +808,7 @@ def _call_ai_for_batch(
     model: str,
     system_prompt: str,
     token: str,
+    base_url: str = _DEFAULT_AI_BASE_URL,
 ) -> tuple[str | None, Exception | None]:
     """Call the AI for a single batch with one model.
 
@@ -819,7 +824,9 @@ def _call_ai_for_batch(
         coverage_details, coverage_threshold, matched_tests,
     )
     try:
-        raw = _call_github_models(model, system_prompt, user_prompt, token)
+        raw = _call_ai_provider(
+            model, system_prompt, user_prompt, token, base_url,
+        )
         return raw, None
     except Exception as exc:
         if _is_retryable_size_error(exc):
@@ -829,8 +836,8 @@ def _call_ai_for_batch(
                 max_diff_chars=_RETRY_MAX_DIFF_CHARS,
             )
             try:
-                raw = _call_github_models(
-                    model, system_prompt, user_prompt, token,
+                raw = _call_ai_provider(
+                    model, system_prompt, user_prompt, token, base_url,
                 )
                 return raw, None
             except Exception as retry_exc:
@@ -838,15 +845,21 @@ def _call_ai_for_batch(
         return None, exc
 
 
-def _call_github_models(
+def _call_ai_provider(
     model: str,
     system_prompt: str,
     user_prompt: str,
     token: str,
+    base_url: str = _DEFAULT_AI_BASE_URL,
 ) -> str:
-    """Call GitHub Models API and return the raw response text."""
+    """Call an OpenAI-compatible inference endpoint, return raw response text.
+
+    ``base_url`` is provider-agnostic: OpenAI, Azure AI Foundry, OpenRouter,
+    or any local gateway speaking the same protocol. GitHub Models used to be
+    hardcoded here; it was retired on 2026-07-30.
+    """
     client = OpenAI(
-        base_url="https://models.github.ai/inference",
+        base_url=base_url,
         api_key=token,
     )
     messages = [
@@ -918,6 +931,7 @@ def run_layer3(
     token: str,
     confidence_threshold: float,
     unmeasurable_files: set[str] | None = None,
+    base_url: str = _DEFAULT_AI_BASE_URL,
 ) -> LayerResult:
     """Run the full Layer 3 evaluation pipeline.
 
@@ -1030,6 +1044,7 @@ def run_layer3(
                         batch, source_diffs, test_diffs,
                         coverage_details, coverage_threshold, l2_matched_tests,
                         models[current_model_idx], system_prompt, token,
+                        base_url,
                     )
                     if raw is not None:
                         _, ai_confidence, batch_verdicts = _parse_ai_response(raw)

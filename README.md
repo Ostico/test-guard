@@ -110,7 +110,9 @@ Priority within a layer: **FAIL > WARNING > PASS > SKIP**.
 
 ## Quick Start
 
-Test-Guard uses the GitHub Models API with your standard `GITHUB_TOKEN`. No external API keys required.
+Layer 3 calls any OpenAI-compatible inference endpoint, so it needs one provider API key.
+
+> **Breaking change (v2).** Test-Guard used to reach GitHub Models with your `GITHUB_TOKEN` and no external key. [GitHub retired GitHub Models on 30 July 2026](https://github.blog/changelog/2026-07-30-github-models-is-now-retired/) — the playground, catalog, and inference API are gone for all customers, and a `GITHUB_TOKEN` no longer authenticates any model endpoint. Set `ai-api-key` (and `ai-base-url` if you are not on OpenAI). Without a key, Layer 3 is skipped and the gate runs on Layer 1 + Layer 2.
 
 ```yaml
 name: Test-Guard
@@ -122,7 +124,6 @@ permissions:
   contents: read
   pull-requests: write
   checks: write
-  models: read  # Required for Layer 3 AI analysis
 
 jobs:
   test-guard:
@@ -139,9 +140,22 @@ jobs:
         uses: ostico/test-guard@v1
         with:
           coverage-file: coverage.xml
+          ai-api-key: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-> The `models: read` permission is required for AI analysis. If you set `ai-enabled: 'false'`, you can omit it.
+> No special GitHub permission is needed for AI analysis — the old `models: read` scope only ever gated GitHub Models and is now inert. What Layer 3 needs is `ai-api-key`. Set `ai-enabled: 'false'` to run Layers 1–2 only.
+
+### Pointing at another provider
+
+`ai-base-url` takes any OpenAI-compatible `/v1` endpoint. Use the model ID *that provider* expects.
+
+| Provider | `ai-base-url` | `ai-model` |
+|:---------|:--------------|:-----------|
+| OpenAI (default) | `https://api.openai.com/v1` | `gpt-4.1-mini` |
+| Azure AI Foundry | `https://<resource>.services.ai.azure.com/openai/v1` | your deployment name |
+| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-4.1-mini` |
+
+Migrating from a pre-retirement config? Drop the `openai/` prefix from `ai-model` unless your new provider namespaces by publisher (OpenRouter does; OpenAI and Azure do not).
 
 ---
 
@@ -155,7 +169,9 @@ jobs:
 | `exclude-patterns` | _(see below)_ | Comma-separated glob patterns to skip. Setting this **replaces** the default list. See [Excluding files](#excluding-files). |
 | `extra-exclude-patterns` | _(empty)_ | Comma-separated glob patterns to exclude **in addition** to `exclude-patterns` (unioned, deduped). Add repo-specific excludes here without re-listing the defaults. |
 | `ai-enabled` | `true` | Enable Layer 3 AI analysis. Truthy values: `true`, `1`, `yes` (case-insensitive); anything else disables it. |
-| `ai-model` | `openai/gpt-4.1-mini` | GitHub Models model ID. |
+| `ai-model` | `gpt-4.1-mini` | Model ID, exactly as `ai-base-url` expects it. |
+| `ai-base-url` | `https://api.openai.com/v1` | OpenAI-compatible inference endpoint. |
+| `ai-api-key` | _(empty)_ | API key for `ai-base-url`; pass it as a secret. Layer 3 is skipped when empty. |
 | `ai-confidence-threshold` | `0.7` | AI FAIL verdicts below this confidence become WARNING. Float, `0.0`–`1.0`; other values fail the run. |
 
 **Default exclude patterns:**
@@ -232,23 +248,28 @@ For `GetSearchController.php` this matches **both** `GetSearchControllerTest.php
 
 ---
 
-## GitHub Models Setup
+## AI Provider Setup
 
-Layer 3 uses the [GitHub Models](https://github.com/marketplace/models) inference API. This works with your existing `GITHUB_TOKEN` — no external API keys needed.
+Layer 3 calls an OpenAI-compatible inference endpoint over the `openai` Python SDK. It previously used GitHub Models, which GitHub retired on 30 July 2026; there is no `GITHUB_TOKEN`-authenticated replacement, so you now supply a provider key.
 
 ### Requirements
 
-1. **`models: read` permission** in your workflow (see Quick Start above).
-2. **GitHub Models enabled** for your account or organization:
-   - **Personal repos:** Go to [github.com/marketplace/models](https://github.com/marketplace/models) and accept the terms. The free tier is sufficient.
-   - **Organization repos:** An organization owner must enable GitHub Models at the org level. Go to **Organization Settings → Copilot → Policies** and enable model access.
-3. **Free tier limits:** GitHub Models free tier allows ~150 requests/day with up to 8K input tokens per request. Test-Guard's smart batching is designed to stay within these limits.
+1. **`ai-api-key`** set to a provider key, passed as a repository or organization secret.
+2. **`ai-base-url`** matching that provider (defaults to OpenAI). Azure AI Foundry is GitHub's own recommended destination for retired GitHub Models workloads.
+3. **`ai-model`** using the ID that provider expects — see the provider table in Quick Start.
+
+Batching still targets ~8K input tokens per request, which keeps per-run cost low on metered providers.
+
+> Requests are billed by whichever provider you configure, not by GitHub. GitHub AI Credits apply to Copilot, and Copilot exposes no OpenAI-compatible endpoint this action can call.
 
 ### Troubleshooting
 
 | Symptom | Cause | Fix |
 |:--------|:------|:----|
-| 403 "Model not accessible" | GitHub Models not enabled | Enable at org or personal level (step 2 above) |
+| 410 `github_models_retirement_brownout` | Config still points at `models.github.ai` | Set `ai-base-url` + `ai-api-key`; that service was retired 30 Jul 2026 |
+| Layer 3 skipped with an `ai-api-key` warning | No provider key configured | Set `ai-api-key` to a secret, or `ai-enabled: 'false'` to silence it |
+| 401 / 403 "Incorrect API key" | Key does not match `ai-base-url`, or `GITHUB_TOKEN` was passed | Use a key issued by that provider |
+| 404 "model does not exist" | Model ID carries the wrong prefix | OpenAI/Azure: `gpt-4.1-mini`. OpenRouter: `openai/gpt-4.1-mini` |
 | 413 "Request body too large" | Diff exceeds model token limit | Automatic — smart batching handles this |
 | Intermittent 429 errors | Rate limit exceeded | Reduce PR size or use `ai-enabled: 'false'` for low-priority PRs |
 
@@ -256,7 +277,7 @@ Layer 3 uses the [GitHub Models](https://github.com/marketplace/models) inferenc
 
 ## AI Architecture
 
-GitHub Models' free tier caps requests at **8K input tokens**. A naive implementation hits that wall constantly on real PRs — Test-Guard avoids it with three layers working together: **compaction** (shrink each diff without losing signal), **batching** (group files so a call never exceeds the cap), and **matching** (only attach the test diffs that actually belong to this batch).
+Layer 3 budgets each request to **8K input tokens**. A naive implementation hits that wall constantly on real PRs — Test-Guard avoids it with three layers working together: **compaction** (shrink each diff without losing signal), **batching** (group files so a call never exceeds the cap), and **matching** (only attach the test diffs that actually belong to this batch).
 
 ```mermaid
 flowchart LR
