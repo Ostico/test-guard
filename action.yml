@@ -33,7 +33,11 @@ inputs:
     description: 'OpenAI-compatible inference endpoint. Examples: https://api.openai.com/v1, https://<resource>.services.ai.azure.com/openai/v1, https://openrouter.ai/api/v1. GitHub Models (models.github.ai) was retired on 2026-07-30 and no longer works.'
     default: 'https://api.openai.com/v1'
   ai-api-key:
-    description: 'API key for ai-base-url. Pass a secret, e.g. ${{ secrets.OPENAI_API_KEY }}. Required for Layer 3 — a GITHUB_TOKEN is not accepted by any of these providers. When empty, Layer 3 is skipped and the gate falls back to Layer 1 + Layer 2.'
+    # Do not write a ${{ ... }} expression anywhere in this file, including
+    # descriptions: GitHub evaluates them when loading the manifest, and
+    # `secrets` is not in scope for a composite action, so the whole action
+    # fails with "Unrecognized named-value: 'secrets'".
+    description: 'API key for ai-base-url; pass it from a repository secret. Required for Layer 3 — a GITHUB_TOKEN is not accepted by any of these providers. When empty, Layer 3 is skipped and the gate falls back to Layer 1 + Layer 2.'
     required: false
     default: ''
   ai-reasoning-effort:
