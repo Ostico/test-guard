@@ -157,6 +157,23 @@ jobs:
 
 Migrating from a pre-retirement config? Drop the `openai/` prefix from `ai-model` unless your new provider namespaces by publisher (OpenRouter does; OpenAI and Azure do not).
 
+### Free options for open-source repos
+
+GitHub no longer offers free inference. Copilot Pro remains [free for verified open-source maintainers, students and teachers](https://docs.github.com/en/copilot/how-tos/manage-your-account/getting-free-access-to-copilot-pro-as-a-student-teacher-or-maintainer), but that is an IDE/CLI entitlement — it exposes no OpenAI-compatible endpoint, so this action cannot use it. Azure AI Foundry, the official migration target, needs an Azure subscription and bills per token.
+
+Third-party free tiers do work here:
+
+| Provider | `ai-base-url` | Free tier |
+|:---------|:--------------|:----------|
+| Groq | `https://api.groq.com/openai/v1` | No card required; ~30 RPM, 1,000–14,400 requests/day depending on model |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | Low daily quota, tightened in Dec 2025 |
+| OpenRouter | `https://openrouter.ai/api/v1` | `:free` model variants |
+
+Two caveats before you rely on one:
+
+- **Strict structured output is required.** Layer 3 requests `response_format=json_schema` with `strict: true`. Models without strict support reject the call, and the batch falls back to Layer 1 + Layer 2 — a working gate with no AI analysis. Groq supports it only on selected models; on OpenRouter it varies per model; Gemini supports it on synchronous chat completions.
+- **Free tiers usually train on your prompts.** Layer 3 sends source and test diffs. Check the provider's data-use terms before pointing this at a private repository.
+
 ---
 
 ## Inputs
