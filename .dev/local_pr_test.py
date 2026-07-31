@@ -100,7 +100,7 @@ def run_local(repo: str, pr_number: int) -> None:
         ai_api_key=_resolve_ai_api_key(),
         ai_reasoning_effort=os.environ.get("AI_REASONING_EFFORT", "low"),
         ai_temperature=float(os.environ.get("AI_TEMPERATURE", "1.0")),
-        ai_max_tokens=int(os.environ.get("AI_MAX_TOKENS", "4096")),
+        ai_max_tokens=int(os.environ.get("AI_MAX_TOKENS", "8192")),
     )
 
     session = create_session(token)

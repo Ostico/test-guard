@@ -775,6 +775,54 @@ class TestTemperature:
         assert mock_client.chat.completions.create.call_args.kwargs["temperature"] == 0.1
 
 
+class TestTruncationWarning:
+    """A thought trace that eats the output cap must not degrade silently."""
+
+    @patch("src.layer3_ai.OpenAI")
+    def test_warns_when_cap_consumed_before_verdict(
+        self, mock_openai: MagicMock, capsys,
+    ):
+        choice = MagicMock()
+        choice.finish_reason = "length"
+        choice.message.content = ""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value.choices = [choice]
+        mock_openai.return_value = mock_client
+
+        result = _call_ai_provider(
+            model="gemini-3.1-flash-lite",
+            system_prompt="system",
+            user_prompt="user",
+            token="sk-fake",
+            max_tokens=8192,
+        )
+
+        assert result == ""
+        out = capsys.readouterr().out
+        assert "::warning::" in out
+        assert "8192-token output cap" in out
+        assert "ai-max-tokens" in out
+
+    @patch("src.layer3_ai.OpenAI")
+    def test_no_warning_on_a_normal_verdict(self, mock_openai: MagicMock, capsys):
+        choice = MagicMock()
+        choice.finish_reason = "stop"
+        choice.message.content = '{"verdict": "pass"}'
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value.choices = [choice]
+        mock_openai.return_value = mock_client
+
+        result = _call_ai_provider(
+            model="gpt-4.1-mini",
+            system_prompt="system",
+            user_prompt="user",
+            token="sk-fake",
+        )
+
+        assert result == '{"verdict": "pass"}'
+        assert "::warning::" not in capsys.readouterr().out
+
+
 class TestMaxTokens:
     @patch("src.layer3_ai.OpenAI")
     def test_forwards_max_tokens(self, mock_openai: MagicMock):
@@ -806,7 +854,7 @@ class TestMaxTokens:
             token="sk-fake",
         )
 
-        assert mock_client.chat.completions.create.call_args.kwargs["max_tokens"] == 4096
+        assert mock_client.chat.completions.create.call_args.kwargs["max_tokens"] == 8192
 
 
 class TestCallAiProvider:

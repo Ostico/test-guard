@@ -913,7 +913,20 @@ def _call_ai_provider(
 
     if not response.choices:
         return ""
-    return response.choices[0].message.content or ""
+
+    choice = response.choices[0]
+    content = choice.message.content or ""
+    # A reasoning model can spend the whole output cap on its thought trace and
+    # return finish_reason="length" with empty content. That parses as SKIP at
+    # confidence 0.0, which is indistinguishable from a model that simply had
+    # nothing to say — so name the cause instead of degrading quietly.
+    if getattr(choice, "finish_reason", None) == "length" and not content.strip():
+        print(
+            f"::warning::{model} hit the {max_tokens}-token output cap before "
+            f"emitting a verdict — most likely the thought trace consumed it. "
+            f"Raise ai-max-tokens or lower ai-reasoning-effort."
+        )
+    return content
 
 
 def _create_completion(

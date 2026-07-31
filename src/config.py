@@ -38,9 +38,14 @@ DEFAULT_AI_REASONING_EFFORT = "none"
 # provider needs this raised.
 DEFAULT_AI_TEMPERATURE = 0.1
 # A verdict payload is a few hundred tokens; the rest of this budget exists so
-# a reasoning model's thought trace cannot squeeze the JSON out. max_tokens is
-# a cap, not a reservation, so a larger value costs nothing when unused.
-DEFAULT_AI_MAX_TOKENS = 4096
+# a reasoning model's thought trace cannot squeeze the JSON out. Thought tokens
+# are charged against the output cap, and when they exhaust it the API returns
+# finish_reason="length" with empty content — which parses as SKIP at
+# confidence 0.0. 8192 is the community-reported floor that avoids that with
+# thinking enabled; the cap is not a reservation, so unused headroom is free.
+# It stays well under the 65536 Gemini 3.x allows, because thought tokens are
+# billed as output and burn free-tier tokens/minute.
+DEFAULT_AI_MAX_TOKENS = 8192
 _DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.7
 _DEFAULT_AI_ENABLED_VALUES = ("true", "1", "yes")
 
