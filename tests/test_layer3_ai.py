@@ -775,6 +775,40 @@ class TestTemperature:
         assert mock_client.chat.completions.create.call_args.kwargs["temperature"] == 0.1
 
 
+class TestMaxTokens:
+    @patch("src.layer3_ai.OpenAI")
+    def test_forwards_max_tokens(self, mock_openai: MagicMock):
+        """Headroom for a thought trace is configurable, not hardcoded."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value.choices = []
+        mock_openai.return_value = mock_client
+
+        _call_ai_provider(
+            model="gemini-3.1-flash-lite",
+            system_prompt="system",
+            user_prompt="user",
+            token="sk-fake",
+            max_tokens=16384,
+        )
+
+        assert mock_client.chat.completions.create.call_args.kwargs["max_tokens"] == 16384
+
+    @patch("src.layer3_ai.OpenAI")
+    def test_default_leaves_room_for_thinking(self, mock_openai: MagicMock):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value.choices = []
+        mock_openai.return_value = mock_client
+
+        _call_ai_provider(
+            model="gpt-4.1-mini",
+            system_prompt="system",
+            user_prompt="user",
+            token="sk-fake",
+        )
+
+        assert mock_client.chat.completions.create.call_args.kwargs["max_tokens"] == 4096
+
+
 class TestCallAiProvider:
     @patch("src.layer3_ai.OpenAI")
     def test_uses_configured_base_url(self, mock_openai: MagicMock):

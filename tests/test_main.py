@@ -246,6 +246,7 @@ class TestRunPipeline:
             base_url="https://api.openai.com/v1",
             reasoning_effort="none",
             temperature=0.1,
+            max_tokens=4096,
             confidence_threshold=0.7,
             unmeasurable_files=set(),
         )

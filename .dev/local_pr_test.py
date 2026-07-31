@@ -15,8 +15,9 @@ exercise the AI path end to end. It needs a provider key:
     GEMINI_API_KEY=... python local_pr_test.py
 
 Provider overrides: AI_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY for the key,
-AI_MODEL, AI_BASE_URL, AI_REASONING_EFFORT. Defaults target gemini-2.5-flash
-with thinking off. Without a key the AI phase is skipped.
+AI_MODEL, AI_BASE_URL, AI_REASONING_EFFORT, AI_TEMPERATURE, AI_MAX_TOKENS.
+Defaults target gemini-3.1-flash-lite at temperature 1.0 with low thinking,
+per Google's guidance for Gemini 3.x. Without a key the AI phase is skipped.
 """
 from __future__ import annotations
 
@@ -97,8 +98,9 @@ def run_local(repo: str, pr_number: int) -> None:
             "https://generativelanguage.googleapis.com/v1beta/openai/",
         ),
         ai_api_key=_resolve_ai_api_key(),
-        ai_reasoning_effort=os.environ.get("AI_REASONING_EFFORT", "minimal"),
+        ai_reasoning_effort=os.environ.get("AI_REASONING_EFFORT", "low"),
         ai_temperature=float(os.environ.get("AI_TEMPERATURE", "1.0")),
+        ai_max_tokens=int(os.environ.get("AI_MAX_TOKENS", "4096")),
     )
 
     session = create_session(token)
@@ -168,6 +170,7 @@ def run_local(repo: str, pr_number: int) -> None:
         base_url=config.ai_base_url,
         reasoning_effort=config.ai_reasoning_effort,
         temperature=config.ai_temperature,
+        max_tokens=config.ai_max_tokens,
         confidence_threshold=config.ai_confidence_threshold,
     )
     report.layers.append(l3)

@@ -37,6 +37,10 @@ DEFAULT_AI_REASONING_EFFORT = "none"
 # lowering temperature can cause looping or degraded reasoning, so that
 # provider needs this raised.
 DEFAULT_AI_TEMPERATURE = 0.1
+# A verdict payload is a few hundred tokens; the rest of this budget exists so
+# a reasoning model's thought trace cannot squeeze the JSON out. max_tokens is
+# a cap, not a reservation, so a larger value costs nothing when unused.
+DEFAULT_AI_MAX_TOKENS = 4096
 _DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.7
 _DEFAULT_AI_ENABLED_VALUES = ("true", "1", "yes")
 
@@ -207,6 +211,7 @@ class Config:
     ai_api_key: str = ""
     ai_reasoning_effort: str = DEFAULT_AI_REASONING_EFFORT
     ai_temperature: float = DEFAULT_AI_TEMPERATURE
+    ai_max_tokens: int = DEFAULT_AI_MAX_TOKENS
 
 
 def _parse_custom_test_patterns(raw: str) -> dict[str, dict[str, str]]:
@@ -343,6 +348,16 @@ def parse_config() -> Config:
             f"falling back to {DEFAULT_AI_TEMPERATURE}."
         )
         ai_temperature = DEFAULT_AI_TEMPERATURE
+
+    max_tokens_raw = _env("AI-MAX-TOKENS", str(DEFAULT_AI_MAX_TOKENS))
+    try:
+        ai_max_tokens = int(max_tokens_raw)
+    except ValueError:
+        print(
+            f"::warning::Invalid ai-max-tokens '{max_tokens_raw}' — "
+            f"falling back to {DEFAULT_AI_MAX_TOKENS}."
+        )
+        ai_max_tokens = DEFAULT_AI_MAX_TOKENS
     if ai_enabled and not ai_api_key:
         print(
             "::warning::ai-enabled is true but ai-api-key is empty — Layer 3 "
@@ -380,5 +395,6 @@ def parse_config() -> Config:
         ai_api_key=ai_api_key,
         ai_reasoning_effort=ai_reasoning_effort,
         ai_temperature=ai_temperature,
+        ai_max_tokens=ai_max_tokens,
         ai_confidence_threshold=ai_confidence_threshold,
     )

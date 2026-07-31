@@ -46,6 +46,9 @@ inputs:
   ai-temperature:
     description: 'Sampling temperature. 0.1 suits OpenAI-style models for a deterministic verdict. Gemini 3.x recommends its default of 1.0 and warns that lowering it can cause looping or degraded reasoning — set 1.0 for those models.'
     default: '0.1'
+  ai-max-tokens:
+    description: 'Output token cap per request. The verdict itself is a few hundred tokens; the headroom exists so a reasoning model thought trace cannot squeeze out the JSON. Raise it if you raise ai-reasoning-effort. Gemini 3.x permits up to 65536.'
+    default: '4096'
   ai-confidence-threshold:
     description: 'Minimum AI confidence to enforce fail verdict (0.0-1.0). Below this, fail becomes warning.'
     default: '0.7'
@@ -77,6 +80,7 @@ runs:
         INPUT_AI-API-KEY: ${{ inputs.ai-api-key }}
         INPUT_AI-REASONING-EFFORT: ${{ inputs.ai-reasoning-effort }}
         INPUT_AI-TEMPERATURE: ${{ inputs.ai-temperature }}
+        INPUT_AI-MAX-TOKENS: ${{ inputs.ai-max-tokens }}
         INPUT_AI-CONFIDENCE-THRESHOLD: ${{ inputs.ai-confidence-threshold }}
         PYTHONPATH: ${{ github.action_path }}
       run: python ${{ github.action_path }}/src/main.py
