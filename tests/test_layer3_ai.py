@@ -3,10 +3,12 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from openai import APIStatusError
 
 import src.layer3_ai as layer3_ai
 from src.layer3_ai import (
+    _REASONING_EFFORT_UNSUPPORTED,
     Layer3Result,
     Relevance,
     _batch_files,
@@ -614,6 +616,129 @@ class TestRunLayer3:
         assert result.verdict == Verdict.FAIL
         fv = {v.file: v for v in result.file_verdicts}["src/bruno/types.ts"]
         assert fv.verdict == Verdict.FAIL
+
+
+class TestReasoningEffort:
+    """`reasoning_effort` defaults to "none" but must not break providers
+    that reject the parameter (OpenAI's gpt-4.1 family)."""
+
+    def setup_method(self):
+        _REASONING_EFFORT_UNSUPPORTED.clear()
+
+    def teardown_method(self):
+        _REASONING_EFFORT_UNSUPPORTED.clear()
+
+    @patch("src.layer3_ai.OpenAI")
+    def test_forwards_reasoning_effort(self, mock_openai: MagicMock):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value.choices = []
+        mock_openai.return_value = mock_client
+
+        _call_ai_provider(
+            model="gemini-2.5-flash",
+            system_prompt="system",
+            user_prompt="user",
+            token="sk-fake",
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            reasoning_effort="none",
+        )
+
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert kwargs["reasoning_effort"] == "none"
+
+    @patch("src.layer3_ai.OpenAI")
+    def test_empty_effort_omits_parameter(self, mock_openai: MagicMock):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value.choices = []
+        mock_openai.return_value = mock_client
+
+        _call_ai_provider(
+            model="gpt-4.1-mini",
+            system_prompt="system",
+            user_prompt="user",
+            token="sk-fake",
+            reasoning_effort="",
+        )
+
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert "reasoning_effort" not in kwargs
+
+    @patch("src.layer3_ai.OpenAI")
+    def test_rejection_retries_without_parameter(self, mock_openai: MagicMock):
+        """A model that rejects the parameter still gets its verdict."""
+        ok = MagicMock()
+        ok.choices = [MagicMock()]
+        ok.choices[0].message.content = '{"verdict": "pass"}'
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [
+            _make_api_error(400, "Unsupported value: 'reasoning_effort' ..."),
+            ok,
+        ]
+        mock_openai.return_value = mock_client
+
+        result = _call_ai_provider(
+            model="gpt-4.1-mini",
+            system_prompt="system",
+            user_prompt="user",
+            token="sk-fake",
+            reasoning_effort="none",
+        )
+
+        assert result == '{"verdict": "pass"}'
+        assert mock_client.chat.completions.create.call_count == 2
+        retry_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert "reasoning_effort" not in retry_kwargs
+
+    @patch("src.layer3_ai.OpenAI")
+    def test_rejection_is_remembered_per_endpoint_and_model(
+        self, mock_openai: MagicMock,
+    ):
+        """The retry costs one extra request per pair, not one per batch."""
+        ok = MagicMock()
+        ok.choices = []
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [
+            _make_api_error(400, "Unknown parameter: 'reasoning_effort'"),
+            ok,
+            ok,
+        ]
+        mock_openai.return_value = mock_client
+
+        for _ in range(2):
+            _call_ai_provider(
+                model="gpt-4.1-mini",
+                system_prompt="system",
+                user_prompt="user",
+                token="sk-fake",
+                reasoning_effort="none",
+            )
+
+        # 2 for the first call (reject + retry), 1 for the second — not 4.
+        assert mock_client.chat.completions.create.call_count == 3
+        assert (
+            "reasoning_effort"
+            not in mock_client.chat.completions.create.call_args.kwargs
+        )
+
+    @patch("src.layer3_ai.OpenAI")
+    def test_unrelated_400_is_not_swallowed(self, mock_openai: MagicMock):
+        """Only parameter rejections trigger the retry — real errors propagate."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = _make_api_error(
+            400, "Incorrect API key provided",
+        )
+        mock_openai.return_value = mock_client
+
+        with pytest.raises(APIStatusError):
+            _call_ai_provider(
+                model="gpt-4.1-mini",
+                system_prompt="system",
+                user_prompt="user",
+                token="sk-fake",
+                reasoning_effort="none",
+            )
+
+        assert mock_client.chat.completions.create.call_count == 1
 
 
 class TestCallAiProvider:

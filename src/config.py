@@ -28,6 +28,10 @@ _DEFAULT_AI_MODEL = "gpt-4.1-mini"
 # Any OpenAI-compatible /v1 endpoint. GitHub Models (models.github.ai) was
 # retired on 2026-07-30 and is no longer a valid target.
 DEFAULT_AI_BASE_URL = "https://api.openai.com/v1"
+# "none" keeps thinking models from spending the output budget on a thought
+# trace and truncating the JSON verdict. Providers that reject the parameter
+# get it stripped automatically (see layer3_ai). Empty string never sends it.
+DEFAULT_AI_REASONING_EFFORT = "none"
 _DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.7
 _DEFAULT_AI_ENABLED_VALUES = ("true", "1", "yes")
 
@@ -170,6 +174,9 @@ class Config:
         ai_base_url: OpenAI-compatible inference endpoint.
         ai_api_key: API key for that endpoint. Empty disables Layer 3's AI
             phase (shortcut gates still run).
+        ai_reasoning_effort: Thinking budget hint sent to reasoning models
+            ("none", "minimal", "low", "medium", "high"). Empty sends nothing;
+            endpoints that reject the parameter get it stripped on retry.
         ai_confidence_threshold: AI FAIL verdicts below this become WARNING (0.0-1.0).
     """
 
@@ -193,6 +200,7 @@ class Config:
     ai_confidence_threshold: float  # 0.0-1.0
     ai_base_url: str = DEFAULT_AI_BASE_URL
     ai_api_key: str = ""
+    ai_reasoning_effort: str = DEFAULT_AI_REASONING_EFFORT
 
 
 def _parse_custom_test_patterns(raw: str) -> dict[str, dict[str, str]]:
@@ -319,6 +327,7 @@ def parse_config() -> Config:
     # Provider API key. Deliberately NOT GITHUB_TOKEN: GitHub Models was
     # retired on 2026-07-30 and a GitHub token authenticates nothing else.
     ai_api_key = _env("AI-API-KEY", "")
+    ai_reasoning_effort = _env("AI-REASONING-EFFORT", DEFAULT_AI_REASONING_EFFORT)
     if ai_enabled and not ai_api_key:
         print(
             "::warning::ai-enabled is true but ai-api-key is empty — Layer 3 "
@@ -354,5 +363,6 @@ def parse_config() -> Config:
         ai_model=ai_model,
         ai_base_url=ai_base_url,
         ai_api_key=ai_api_key,
+        ai_reasoning_effort=ai_reasoning_effort,
         ai_confidence_threshold=ai_confidence_threshold,
     )

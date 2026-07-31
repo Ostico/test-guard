@@ -144,6 +144,7 @@ def run_pipeline(config: Config) -> Report:
         model=config.ai_model,
         token=config.ai_api_key,
         base_url=config.ai_base_url,
+        reasoning_effort=config.ai_reasoning_effort,
         confidence_threshold=config.ai_confidence_threshold,
         # L1 proved these are instrumented but contributed no executable changed
         # lines, so Gate 2 skips them instead of Gate 4 failing them at 0%.

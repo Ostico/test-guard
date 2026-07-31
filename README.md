@@ -174,7 +174,8 @@ Notes that decide whether these actually work:
 
 - **On Groq, only `openai/gpt-oss-20b` and `openai/gpt-oss-120b` support `strict: true`.** Other Groq models — including `moonshotai/kimi-k2-instruct-0905` — offer best-effort JSON or tool-use only, and will fail Layer 3's strict call.
 - **Groq's 8K tokens/minute free cap is tight for this workload.** Layer 3 budgets up to 8K input tokens per request, so one full-size batch can consume the entire per-minute allowance and the next batch 429s. Layer 3 has no 429 backoff, so a large PR degrades to L1+L2. Fine for small PRs; unreliable for big ones.
-- **Prefer a non-thinking Gemini model.** `gemini-2.5-flash` has thinking on by default and billing counts thought tokens as output; Layer 3 caps `max_tokens` at 2048, so a long thought trace risks truncating the JSON (which parses as SKIP, confidence 0.0). `gemini-2.5-flash-lite` defaults to thinking off. Layer 3 does not currently send `reasoning_effort`, so this is not tunable from the action.
+- **Thinking is disabled by default.** Layer 3 sends `reasoning_effort: none`, which switches thinking off on Gemini 2.5 models and Groq's gpt-oss. This matters because Layer 3 caps `max_tokens` at 2048 and thought tokens count as output, so an unbounded thought trace can truncate the JSON — which parses as SKIP at confidence 0.0. Both `gemini-2.5-flash` and `gemini-2.5-flash-lite` are safe with this default. Raise it via `ai-reasoning-effort` if you want the model to think; note that thinking cannot be disabled at all on `gemini-2.5-pro` or the Gemini 3.x models.
+- **Providers that reject the parameter are handled automatically.** OpenAI's `gpt-4.1` family returns a 400 for `reasoning_effort`. Layer 3 detects that specific rejection, retries once without the parameter, and remembers the endpoint/model pair — so the default OpenAI setup costs one extra request per run, not per batch.
 - **Free tiers generally train on submitted prompts.** Layer 3 sends source and test diffs. Check the provider's data-use terms before pointing this at a private repository.
 
 ---
@@ -192,6 +193,7 @@ Notes that decide whether these actually work:
 | `ai-model` | `gpt-4.1-mini` | Model ID, exactly as `ai-base-url` expects it. |
 | `ai-base-url` | `https://api.openai.com/v1` | OpenAI-compatible inference endpoint. |
 | `ai-api-key` | _(empty)_ | API key for `ai-base-url`; pass it as a secret. Layer 3 is skipped when empty. |
+| `ai-reasoning-effort` | `none` | Thinking budget for reasoning models: `none`, `minimal`, `low`, `medium`, `high`. Empty omits the parameter. |
 | `ai-confidence-threshold` | `0.7` | AI FAIL verdicts below this confidence become WARNING. Float, `0.0`–`1.0`; other values fail the run. |
 
 **Default exclude patterns:**

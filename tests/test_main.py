@@ -244,6 +244,7 @@ class TestRunPipeline:
             # now that GitHub Models is retired.
             token="sk-fake",
             base_url="https://api.openai.com/v1",
+            reasoning_effort="none",
             confidence_threshold=0.7,
             unmeasurable_files=set(),
         )

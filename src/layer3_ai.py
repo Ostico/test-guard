@@ -32,6 +32,7 @@ from unidiff import PatchSet
 from unidiff.errors import UnidiffParseError
 
 from src.config import DEFAULT_AI_BASE_URL as _DEFAULT_AI_BASE_URL
+from src.config import DEFAULT_AI_REASONING_EFFORT as _DEFAULT_AI_REASONING_EFFORT
 from src.diff_utils import is_trivial_diff
 from src.models import FileVerdict, LayerResult, Verdict
 
@@ -610,6 +611,10 @@ _DEFAULT_FALLBACK_CHAIN: tuple[str, ...] = (
     "gpt-4.1-nano",
 )
 
+# Endpoint/model pairs that rejected `reasoning_effort`. Populated at runtime
+# so the fallback costs one extra request per pair, not one per batch.
+_REASONING_EFFORT_UNSUPPORTED: set[tuple[str, str]] = set()
+
 _CHARS_PER_TOKEN = 3
 _INPUT_TOKEN_LIMIT = 8000
 _SYSTEM_OVERHEAD_TOKENS = 800   # system prompt + JSON schema overhead
@@ -759,6 +764,19 @@ def _is_retryable_size_error(exc: Exception) -> bool:
     return False
 
 
+def _is_unsupported_reasoning_effort_error(exc: Exception) -> bool:
+    """True when the endpoint rejected the ``reasoning_effort`` parameter.
+
+    Non-reasoning models reject it in provider-specific ways — OpenAI answers
+    "Unsupported value", Azure "Unrecognized request argument", others
+    "Unknown parameter" — but every variant names the parameter, so match on
+    that rather than on a message template.
+    """
+    if isinstance(exc, APIStatusError) and exc.status_code in (400, 404, 422):
+        return "reasoning_effort" in str(exc).lower()
+    return False
+
+
 def _validate_batch_verdicts(
     verdicts: list[FileVerdict],
     batch_files: list[str],
@@ -809,6 +827,7 @@ def _call_ai_for_batch(
     system_prompt: str,
     token: str,
     base_url: str = _DEFAULT_AI_BASE_URL,
+    reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
 ) -> tuple[str | None, Exception | None]:
     """Call the AI for a single batch with one model.
 
@@ -826,6 +845,7 @@ def _call_ai_for_batch(
     try:
         raw = _call_ai_provider(
             model, system_prompt, user_prompt, token, base_url,
+            reasoning_effort,
         )
         return raw, None
     except Exception as exc:
@@ -851,12 +871,19 @@ def _call_ai_provider(
     user_prompt: str,
     token: str,
     base_url: str = _DEFAULT_AI_BASE_URL,
+    reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
 ) -> str:
     """Call an OpenAI-compatible inference endpoint, return raw response text.
 
     ``base_url`` is provider-agnostic: OpenAI, Azure AI Foundry, OpenRouter,
     or any local gateway speaking the same protocol. GitHub Models used to be
     hardcoded here; it was retired on 2026-07-30.
+
+    ``reasoning_effort`` defaults to ``"none"`` to keep thinking models from
+    spending the 2048-token output budget on a thought trace and truncating
+    the JSON verdict. Non-reasoning models (OpenAI's gpt-4.1 family) reject
+    the parameter outright, so an unsupported-parameter rejection is retried
+    once without it and the (endpoint, model) pair is remembered.
     """
     client = OpenAI(
         base_url=base_url,
@@ -866,7 +893,31 @@ def _call_ai_provider(
         ChatCompletionSystemMessageParam(role="system", content=system_prompt),
         ChatCompletionUserMessageParam(role="user", content=user_prompt),
     ]
-    response = client.chat.completions.create(
+    extra: dict[str, object] = {}
+    if reasoning_effort and (base_url, model) not in _REASONING_EFFORT_UNSUPPORTED:
+        extra["reasoning_effort"] = reasoning_effort
+
+    try:
+        response = _create_completion(client, model, messages, extra)
+    except Exception as exc:
+        if not extra or not _is_unsupported_reasoning_effort_error(exc):
+            raise
+        _REASONING_EFFORT_UNSUPPORTED.add((base_url, model))
+        response = _create_completion(client, model, messages, {})
+
+    if not response.choices:
+        return ""
+    return response.choices[0].message.content or ""
+
+
+def _create_completion(
+    client: OpenAI,
+    model: str,
+    messages: list[object],
+    extra: dict[str, object],
+) -> object:
+    """Issue the chat-completion request, with ``extra`` merged into kwargs."""
+    return client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=0.1,
@@ -879,10 +930,8 @@ def _call_ai_provider(
                 schema=_VERDICT_SCHEMA,
             ),
         ),
+        **extra,
     )
-    if not response.choices:
-        return ""
-    return response.choices[0].message.content or ""
 
 
 def _parse_ai_response(
@@ -932,6 +981,7 @@ def run_layer3(
     confidence_threshold: float,
     unmeasurable_files: set[str] | None = None,
     base_url: str = _DEFAULT_AI_BASE_URL,
+    reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
 ) -> LayerResult:
     """Run the full Layer 3 evaluation pipeline.
 
@@ -1044,7 +1094,7 @@ def run_layer3(
                         batch, source_diffs, test_diffs,
                         coverage_details, coverage_threshold, l2_matched_tests,
                         models[current_model_idx], system_prompt, token,
-                        base_url,
+                        base_url, reasoning_effort,
                     )
                     if raw is not None:
                         _, ai_confidence, batch_verdicts = _parse_ai_response(raw)
