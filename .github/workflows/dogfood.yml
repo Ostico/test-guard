@@ -1,7 +1,8 @@
 name: Test Guard (Dogfood)
 on:
   pull_request:
-    types: [opened, synchronize]
+    # `labeled` lets the dogfood-ai label below start a run without a push.
+    types: [opened, synchronize, labeled]
 
 # Cancel superseded runs: only the newest push per PR branch keeps running.
 concurrency:
@@ -34,7 +35,12 @@ jobs:
       - name: Run Test Guard on itself
         uses: ./
         with:
-          coverage-file: coverage.xml
+          # At threshold 100 with a full coverage report, Gates 3 and 5 resolve
+          # every file deterministically and the AI phase never runs. Add the
+          # `dogfood-ai` label to a PR to withhold coverage for one run, so
+          # files fall through to the AI gates (6-8) and Layer 3 is exercised
+          # end to end. Without the label this stays the strict coverage gate.
+          coverage-file: ${{ contains(github.event.pull_request.labels.*.name, 'dogfood-ai') && '' || 'coverage.xml' }}
           coverage-threshold: '100'
           # Gemini 2.5 was shut down ahead of its documented Oct 2026 date and
           # now 404s. flash-lite defaults to minimal thinking, which suits the

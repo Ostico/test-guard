@@ -68,6 +68,45 @@ class TestParseConfig:
         assert cfg.ai_model == "openai/gpt-4.1-mini"
         assert cfg.ai_enabled is True
 
+    def test_invalid_temperature_falls_back(self, monkeypatch, capsys):
+        """A bad temperature must not abort the run — warn and use the default."""
+        monkeypatch.setenv("INPUT_AI-TEMPERATURE", "not-a-number")
+        monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        cfg = parse_config()
+        assert cfg.ai_temperature == 0.1
+        out = capsys.readouterr().out
+        assert "::warning::" in out
+        assert "ai-temperature" in out
+
+    def test_invalid_max_tokens_falls_back(self, monkeypatch, capsys):
+        monkeypatch.setenv("INPUT_AI-MAX-TOKENS", "lots")
+        monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        cfg = parse_config()
+        assert cfg.ai_max_tokens == 8192
+        out = capsys.readouterr().out
+        assert "::warning::" in out
+        assert "ai-max-tokens" in out
+
+    def test_valid_temperature_and_max_tokens_are_used(self, monkeypatch):
+        monkeypatch.setenv("INPUT_AI-TEMPERATURE", "1.0")
+        monkeypatch.setenv("INPUT_AI-MAX-TOKENS", "16384")
+        monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        cfg = parse_config()
+        assert cfg.ai_temperature == 1.0
+        assert cfg.ai_max_tokens == 16384
+
     def test_missing_api_key_disables_ai(self, monkeypatch, capsys):
         """No key means no AI phase: GITHUB_TOKEN is not a provider credential.
 
