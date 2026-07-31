@@ -7,13 +7,24 @@ Usage:
     GITHUB_TOKEN=ghp_xxx python local_pr_test.py     # explicit token
 
 Token resolution: GITHUB_TOKEN env var → `gh auth token` CLI fallback.
+
+Layer 3 runs with no coverage report (coverage_files=[]), so files reach the
+AI gates instead of being resolved by coverage shortcuts — this is the way to
+exercise the AI path end to end. It needs a provider key:
+
+    GEMINI_API_KEY=... python local_pr_test.py
+
+Provider overrides: AI_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY for the key,
+AI_MODEL, AI_BASE_URL, AI_REASONING_EFFORT. Defaults target gemini-2.5-flash
+with thinking off. Without a key the AI phase is skipped.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
-from src.config import Config, _DEFAULT_EXCLUDE, _DEFAULT_TEST_PATTERNS
+from src.config import _DEFAULT_EXCLUDE, _DEFAULT_TEST_PATTERNS, Config
 from src.github_api import create_session
 from src.github_client import format_report
 from src.layer1_coverage import run_layer1
@@ -28,7 +39,6 @@ DEFAULT_PR = 4515
 
 
 def _resolve_token() -> str:
-    import os
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         return token
@@ -39,6 +49,25 @@ def _resolve_token() -> str:
         return result.stdout.strip()
     print("ERROR: No GITHUB_TOKEN and `gh auth token` failed.", file=sys.stderr)
     sys.exit(1)
+
+
+def _resolve_ai_api_key() -> str:
+    """Provider key for Layer 3, from the first env var that is set.
+
+    Deliberately not GITHUB_TOKEN: GitHub Models was retired on 2026-07-30 and
+    a GitHub token authenticates no inference endpoint. Without a key the AI
+    phase is skipped and only the shortcut gates run.
+    """
+    for name in ("AI_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    print(
+        "WARNING: no AI_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY set — "
+        "Layer 3 will run shortcut gates only, no AI call.",
+        file=sys.stderr,
+    )
+    return ""
 
 
 def run_local(repo: str, pr_number: int) -> None:
@@ -55,8 +84,14 @@ def run_local(repo: str, pr_number: int) -> None:
         test_patterns=_DEFAULT_TEST_PATTERNS,
         exclude_patterns=exclude_patterns,
         ai_enabled=True,
-        ai_model="openai/gpt-5-mini",
+        ai_model=os.environ.get("AI_MODEL", "gemini-2.5-flash"),
         ai_confidence_threshold=0.7,
+        ai_base_url=os.environ.get(
+            "AI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        ),
+        ai_api_key=_resolve_ai_api_key(),
+        ai_reasoning_effort=os.environ.get("AI_REASONING_EFFORT", "none"),
     )
 
     session = create_session(token)
@@ -122,7 +157,9 @@ def run_local(repo: str, pr_number: int) -> None:
         coverage_details=l1.coverage_details,
         coverage_threshold=config.coverage_threshold,
         model=config.ai_model,
-        token=config.github_token,
+        token=config.ai_api_key,
+        base_url=config.ai_base_url,
+        reasoning_effort=config.ai_reasoning_effort,
         confidence_threshold=config.ai_confidence_threshold,
     )
     report.layers.append(l3)
