@@ -82,45 +82,45 @@ class TestParseConfig:
         assert "::warning::" in out
         assert "ai-temperature" in out
 
-    def test_input_token_limit_is_configurable(self, monkeypatch):
+    def test_max_input_tokens_is_configurable(self, monkeypatch):
         """Raising the prompt budget is how large test diffs stop being shed."""
-        monkeypatch.setenv("INPUT_AI-INPUT-TOKEN-LIMIT", "32000")
+        monkeypatch.setenv("INPUT_AI-MAX-INPUT-TOKENS", "32000")
         monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
         monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
         monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
 
-        assert parse_config().ai_input_token_limit == 32000
+        assert parse_config().ai_max_input_tokens == 32000
 
-    def test_invalid_input_token_limit_falls_back(self, monkeypatch, capsys):
-        monkeypatch.setenv("INPUT_AI-INPUT-TOKEN-LIMIT", "huge")
-        monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
-        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
-        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
-
-        cfg = parse_config()
-        assert cfg.ai_input_token_limit == 8000
-        out = capsys.readouterr().out
-        assert "::warning::" in out
-        assert "ai-input-token-limit" in out
-
-    def test_invalid_max_tokens_falls_back(self, monkeypatch, capsys):
-        monkeypatch.setenv("INPUT_AI-MAX-TOKENS", "lots")
+    def test_invalid_max_input_tokens_falls_back(self, monkeypatch, capsys):
+        monkeypatch.setenv("INPUT_AI-MAX-INPUT-TOKENS", "huge")
         monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
         monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
         monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
 
         cfg = parse_config()
-        assert cfg.ai_max_tokens == 8192
+        assert cfg.ai_max_input_tokens == 8000
         out = capsys.readouterr().out
         assert "::warning::" in out
-        assert "ai-max-tokens" in out
+        assert "ai-max-input-tokens" in out
 
-    def test_valid_temperature_and_max_tokens_are_used(self, monkeypatch):
+    def test_invalid_max_output_tokens_falls_back(self, monkeypatch, capsys):
+        monkeypatch.setenv("INPUT_AI-MAX-OUTPUT-TOKENS", "lots")
+        monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        cfg = parse_config()
+        assert cfg.ai_max_output_tokens == 8192
+        out = capsys.readouterr().out
+        assert "::warning::" in out
+        assert "ai-max-output-tokens" in out
+
+    def test_valid_temperature_and_max_output_tokens_are_used(self, monkeypatch):
         monkeypatch.setenv("INPUT_AI-TEMPERATURE", "1.0")
-        monkeypatch.setenv("INPUT_AI-MAX-TOKENS", "16384")
+        monkeypatch.setenv("INPUT_AI-MAX-OUTPUT-TOKENS", "16384")
         monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
         monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
@@ -128,7 +128,7 @@ class TestParseConfig:
 
         cfg = parse_config()
         assert cfg.ai_temperature == 1.0
-        assert cfg.ai_max_tokens == 16384
+        assert cfg.ai_max_output_tokens == 16384
 
     def test_missing_api_key_disables_ai(self, monkeypatch, capsys):
         """No key means no AI phase: GITHUB_TOKEN is not a provider credential.

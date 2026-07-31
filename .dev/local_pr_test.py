@@ -15,8 +15,8 @@ exercise the AI path end to end. It needs a provider key:
     GEMINI_API_KEY=... python local_pr_test.py
 
 Provider overrides: AI_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY for the key,
-AI_MODEL, AI_BASE_URL, AI_REASONING_EFFORT, AI_TEMPERATURE, AI_MAX_TOKENS,
-AI_INPUT_TOKEN_LIMIT.
+AI_MODEL, AI_BASE_URL, AI_REASONING_EFFORT, AI_TEMPERATURE, AI_MAX_OUTPUT_TOKENS,
+AI_MAX_INPUT_TOKENS.
 Defaults target gemini-3.1-flash-lite at temperature 1.0 with low thinking,
 per Google's guidance for Gemini 3.x. Without a key the AI phase is skipped.
 """
@@ -101,8 +101,8 @@ def run_local(repo: str, pr_number: int) -> None:
         ai_api_key=_resolve_ai_api_key(),
         ai_reasoning_effort=os.environ.get("AI_REASONING_EFFORT", "low"),
         ai_temperature=float(os.environ.get("AI_TEMPERATURE", "1.0")),
-        ai_max_tokens=int(os.environ.get("AI_MAX_TOKENS", "8192")),
-        ai_input_token_limit=int(os.environ.get("AI_INPUT_TOKEN_LIMIT", "32000")),
+        ai_max_output_tokens=int(os.environ.get("AI_MAX_OUTPUT_TOKENS", "8192")),
+        ai_max_input_tokens=int(os.environ.get("AI_MAX_INPUT_TOKENS", "32000")),
     )
 
     session = create_session(token)
@@ -172,8 +172,8 @@ def run_local(repo: str, pr_number: int) -> None:
         base_url=config.ai_base_url,
         reasoning_effort=config.ai_reasoning_effort,
         temperature=config.ai_temperature,
-        max_tokens=config.ai_max_tokens,
-        input_token_limit=config.ai_input_token_limit,
+        max_output_tokens=config.ai_max_output_tokens,
+        max_input_tokens=config.ai_max_input_tokens,
         confidence_threshold=config.ai_confidence_threshold,
     )
     report.layers.append(l3)

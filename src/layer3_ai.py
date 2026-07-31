@@ -32,8 +32,8 @@ from unidiff import PatchSet
 from unidiff.errors import UnidiffParseError
 
 from src.config import DEFAULT_AI_BASE_URL as _DEFAULT_AI_BASE_URL
-from src.config import DEFAULT_AI_INPUT_TOKEN_LIMIT as _DEFAULT_AI_INPUT_TOKEN_LIMIT
-from src.config import DEFAULT_AI_MAX_TOKENS as _DEFAULT_AI_MAX_TOKENS
+from src.config import DEFAULT_AI_MAX_INPUT_TOKENS as _DEFAULT_AI_MAX_INPUT_TOKENS
+from src.config import DEFAULT_AI_MAX_OUTPUT_TOKENS as _DEFAULT_AI_MAX_OUTPUT_TOKENS
 from src.config import DEFAULT_AI_REASONING_EFFORT as _DEFAULT_AI_REASONING_EFFORT
 from src.config import DEFAULT_AI_TEMPERATURE as _DEFAULT_AI_TEMPERATURE
 from src.diff_utils import is_trivial_diff
@@ -634,18 +634,18 @@ _DEFAULT_FALLBACK_CHAIN: tuple[str, ...] = (
 _REASONING_EFFORT_UNSUPPORTED: set[tuple[str, str]] = set()
 
 _CHARS_PER_TOKEN = 3
-_INPUT_TOKEN_LIMIT = _DEFAULT_AI_INPUT_TOKEN_LIMIT
+_MAX_INPUT_TOKENS = _DEFAULT_AI_MAX_INPUT_TOKENS
 _SYSTEM_OVERHEAD_TOKENS = 800   # system prompt + JSON schema overhead
 _SAFETY_FACTOR = 0.85
 
 
-def _user_prompt_budget(input_token_limit: int = _INPUT_TOKEN_LIMIT) -> int:
+def _user_prompt_budget(max_input_tokens: int = _MAX_INPUT_TOKENS) -> int:
     """Tokens available for the user prompt at a given input budget.
 
     Subtracts the system prompt and schema, then applies a safety factor
     because token counts here are estimated from characters, not measured.
     """
-    return int((input_token_limit - _SYSTEM_OVERHEAD_TOKENS) * _SAFETY_FACTOR)
+    return int((max_input_tokens - _SYSTEM_OVERHEAD_TOKENS) * _SAFETY_FACTOR)
 
 
 _USER_PROMPT_TOKEN_BUDGET = _user_prompt_budget()  # = 6120 tokens at 8000
@@ -856,8 +856,8 @@ def _call_ai_for_batch(
     base_url: str = _DEFAULT_AI_BASE_URL,
     reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
     temperature: float = _DEFAULT_AI_TEMPERATURE,
-    max_tokens: int = _DEFAULT_AI_MAX_TOKENS,
-    input_token_limit: int = _DEFAULT_AI_INPUT_TOKEN_LIMIT,
+    max_output_tokens: int = _DEFAULT_AI_MAX_OUTPUT_TOKENS,
+    max_input_tokens: int = _DEFAULT_AI_MAX_INPUT_TOKENS,
 ) -> tuple[str | None, Exception | None]:
     """Call the AI for a single batch with one model.
 
@@ -868,7 +868,7 @@ def _call_ai_for_batch(
     batch_test_diffs = _filter_test_diffs_for_batch(
         batch_files, test_diffs, matched_tests,
     )
-    token_budget = _user_prompt_budget(input_token_limit)
+    token_budget = _user_prompt_budget(max_input_tokens)
     user_prompt = _build_ai_prompt(
         batch_files, source_diffs, batch_test_diffs,
         coverage_details, coverage_threshold, matched_tests,
@@ -877,7 +877,7 @@ def _call_ai_for_batch(
     try:
         raw = _call_ai_provider(
             model, system_prompt, user_prompt, token, base_url,
-            reasoning_effort, temperature, max_tokens,
+            reasoning_effort, temperature, max_output_tokens,
         )
         return raw, None
     except Exception as exc:
@@ -906,7 +906,7 @@ def _call_ai_provider(
     base_url: str = _DEFAULT_AI_BASE_URL,
     reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
     temperature: float = _DEFAULT_AI_TEMPERATURE,
-    max_tokens: int = _DEFAULT_AI_MAX_TOKENS,
+    max_output_tokens: int = _DEFAULT_AI_MAX_OUTPUT_TOKENS,
 ) -> str:
     """Call an OpenAI-compatible inference endpoint, return raw response text.
 
@@ -933,12 +933,14 @@ def _call_ai_provider(
         extra["reasoning_effort"] = reasoning_effort
 
     try:
-        response = _create_completion(client, model, messages, extra, temperature, max_tokens)
+        response = _create_completion(
+            client, model, messages, extra, temperature, max_output_tokens,
+        )
     except Exception as exc:
         if not extra or not _is_unsupported_reasoning_effort_error(exc):
             raise
         _REASONING_EFFORT_UNSUPPORTED.add((base_url, model))
-        response = _create_completion(client, model, messages, {}, temperature, max_tokens)
+        response = _create_completion(client, model, messages, {}, temperature, max_output_tokens)
 
     if not response.choices:
         return ""
@@ -951,9 +953,9 @@ def _call_ai_provider(
     # nothing to say — so name the cause instead of degrading quietly.
     if getattr(choice, "finish_reason", None) == "length" and not content.strip():
         print(
-            f"::warning::{model} hit the {max_tokens}-token output cap before "
+            f"::warning::{model} hit the {max_output_tokens}-token output cap before "
             f"emitting a verdict — most likely the thought trace consumed it. "
-            f"Raise ai-max-tokens or lower ai-reasoning-effort."
+            f"Raise ai-max-output-tokens or lower ai-reasoning-effort."
         )
     return content
 
@@ -964,14 +966,14 @@ def _create_completion(
     messages: list[object],
     extra: dict[str, object],
     temperature: float = _DEFAULT_AI_TEMPERATURE,
-    max_tokens: int = _DEFAULT_AI_MAX_TOKENS,
+    max_output_tokens: int = _DEFAULT_AI_MAX_OUTPUT_TOKENS,
 ) -> object:
     """Issue the chat-completion request, with ``extra`` merged into kwargs."""
     return client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=temperature,
-        max_tokens=max_tokens,
+        max_tokens=max_output_tokens,
         response_format=ResponseFormatJSONSchema(
             type="json_schema",
             json_schema=JSONSchema(
@@ -1033,8 +1035,8 @@ def run_layer3(
     base_url: str = _DEFAULT_AI_BASE_URL,
     reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
     temperature: float = _DEFAULT_AI_TEMPERATURE,
-    max_tokens: int = _DEFAULT_AI_MAX_TOKENS,
-    input_token_limit: int = _DEFAULT_AI_INPUT_TOKEN_LIMIT,
+    max_output_tokens: int = _DEFAULT_AI_MAX_OUTPUT_TOKENS,
+    max_input_tokens: int = _DEFAULT_AI_MAX_INPUT_TOKENS,
 ) -> LayerResult:
     """Run the full Layer 3 evaluation pipeline.
 
@@ -1147,8 +1149,8 @@ def run_layer3(
                         batch, source_diffs, test_diffs,
                         coverage_details, coverage_threshold, l2_matched_tests,
                         models[current_model_idx], system_prompt, token,
-                        base_url, reasoning_effort, temperature, max_tokens,
-                        input_token_limit,
+                        base_url, reasoning_effort, temperature, max_output_tokens,
+                        max_input_tokens,
                     )
                     if raw is not None:
                         _, ai_confidence, batch_verdicts = _parse_ai_response(raw)

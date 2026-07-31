@@ -156,14 +156,14 @@ Every AI input in one place. Copy the column for your provider.
 | `ai-api-key` | `OPENAI_API_KEY` | `GEMINI_API_KEY` | Foundry key | `GROQ_API_KEY` |
 | `ai-reasoning-effort` | `none` (stripped automatically) | `low` | depends on model | `low` |
 | `ai-temperature` | `0.1` | **`1.0`** | `0.1` | `0.1` |
-| `ai-max-tokens` | `8192` | `8192` | `8192` | `8192` |
-| `ai-input-token-limit` | `8000` | `32000` | `32000` | **`8000`** |
+| `ai-max-output-tokens` | `8192` | `8192` | `8192` | `8192` |
+| `ai-max-input-tokens` | `8000` | `32000` | `32000` | **`8000`** |
 | Strict `json_schema` | yes | yes | yes | gpt-oss only |
 
 Why the non-obvious values:
 
 - **Gemini `ai-temperature: '1.0'`** — Google documents its default as strongly recommended and warns that lowering it causes looping or degraded reasoning. The `0.1` default suits OpenAI-style models and is actively wrong here.
-- **Gemini `ai-input-token-limit: '32000'`** — a 1M-token context window makes the `8000` default needlessly tight, and a shed test diff produces false warnings (see below).
+- **Gemini `ai-max-input-tokens: '32000'`** — a 1M-token context window makes the `8000` default needlessly tight, and a shed test diff produces false warnings (see below).
 - **Groq stays at `8000`** — its free tier allows only 8K tokens *per minute*, so a larger prompt trips 429s, and Layer 3 has no 429 backoff.
 - **OpenAI `ai-reasoning-effort`** — `gpt-4.1` rejects the parameter with a 400; Layer 3 detects that, retries once without it, and remembers the endpoint/model pair.
 
@@ -197,11 +197,11 @@ Notes that decide whether these actually work:
 - **On Groq, only `openai/gpt-oss-20b` and `openai/gpt-oss-120b` support `strict: true`.** Other Groq models — including `moonshotai/kimi-k2-instruct-0905` — offer best-effort JSON or tool-use only, and will fail Layer 3's strict call.
 - **Groq's 8K tokens/minute free cap is tight for this workload.** Layer 3 budgets up to 8K input tokens per request, so one full-size batch can consume the entire per-minute allowance and the next batch 429s. Layer 3 has no 429 backoff, so a large PR degrades to L1+L2. Fine for small PRs; unreliable for big ones.
 - **Model IDs go stale — verify before trusting one.** Gemini 2.5 was shut down ahead of its documented October 2026 date, and a retired ID returns a generic `404 models/<id> is not found for API version v1beta`, which reads like a URL bug. List what your key can actually reach: `curl "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY"`.
-- **Gemini 3.x cannot disable thinking — and you should not want to.** `minimal` is the floor and only "matches the no-thinking setting for most queries". Published intelligence scores for these models are *reasoning-enabled*: `gemini-3.1-flash-lite` scores 25 on the Artificial Analysis Intelligence Index versus 15 for `gpt-4.1-mini`, the baseline this prompt was tuned on — but that figure does not describe a minimal-thinking run, and Google recommends thinking for code reasoning specifically. Layer 3 is code judgment, so prefer `low` or higher and give it room via `ai-max-tokens` rather than flooring the effort.
-- **Budget output tokens for the thought trace.** The verdict JSON is a few hundred tokens, but thought tokens count as output and truncated JSON parses as SKIP at confidence 0.0. `ai-max-tokens` defaults to `8192`; raise it if you raise `ai-reasoning-effort`. Gemini 3.x permits up to 65,536 output tokens, so the model is not the constraint — free-tier tokens/minute is.
+- **Gemini 3.x cannot disable thinking — and you should not want to.** `minimal` is the floor and only "matches the no-thinking setting for most queries". Published intelligence scores for these models are *reasoning-enabled*: `gemini-3.1-flash-lite` scores 25 on the Artificial Analysis Intelligence Index versus 15 for `gpt-4.1-mini`, the baseline this prompt was tuned on — but that figure does not describe a minimal-thinking run, and Google recommends thinking for code reasoning specifically. Layer 3 is code judgment, so prefer `low` or higher and give it room via `ai-max-output-tokens` rather than flooring the effort.
+- **Budget output tokens for the thought trace.** The verdict JSON is a few hundred tokens, but thought tokens count as output and truncated JSON parses as SKIP at confidence 0.0. `ai-max-output-tokens` defaults to `8192`; raise it if you raise `ai-reasoning-effort`. Gemini 3.x permits up to 65,536 output tokens, so the model is not the constraint — free-tier tokens/minute is.
 - **Gemini 3.x wants `ai-temperature: '1.0'`.** Google documents its default as strongly recommended and warns that lowering temperature can cause looping or degraded reasoning. The action default of `0.1` suits OpenAI-style models but is actively wrong here.
 - **Superseded guidance, kept for context: `gemini-2.5-flash` over `flash-lite`.** Layer 3 is a judgment task — map changed behaviours to test assertions across four dimensions, then calibrate confidence to evidence quality. On Artificial Analysis, Gemini 2.5 Flash without reasoning scores 14 on the Intelligence Index against 15 for `gpt-4.1-mini`, the model this action was tuned on, so it is close to parity. Flash-Lite without reasoning scores 7. The risk with a weaker model is not missed problems — those fail open to L1+L2 — but *confidently wrong* FAILs: `ai-confidence-threshold` only softens a FAIL to a WARNING when the model reports low confidence, and weak models tend to report high confidence regardless. Weaker models also more often omit a file from the response, which discards the whole batch (`_validate_batch_verdicts`). If you do run Flash-Lite, raise `ai-confidence-threshold` to around `0.8`.
-- **Thinking is disabled by default.** Layer 3 sends `reasoning_effort: none`, which switches thinking off on Gemini 2.5 models and Groq's gpt-oss. This matters because Layer 3 caps `max_tokens` at 2048 and thought tokens count as output, so an unbounded thought trace can truncate the JSON — which parses as SKIP at confidence 0.0. Both `gemini-2.5-flash` and `gemini-2.5-flash-lite` are safe with this default. Raise it via `ai-reasoning-effort` if you want the model to think; note that thinking cannot be disabled at all on `gemini-2.5-pro` or the Gemini 3.x models.
+- **Thinking is disabled by default.** Layer 3 sends `reasoning_effort: none`, which switches thinking off on Gemini 2.5 models and Groq's gpt-oss. This matters because Layer 3 caps `max_output_tokens` at 2048 and thought tokens count as output, so an unbounded thought trace can truncate the JSON — which parses as SKIP at confidence 0.0. Both `gemini-2.5-flash` and `gemini-2.5-flash-lite` are safe with this default. Raise it via `ai-reasoning-effort` if you want the model to think; note that thinking cannot be disabled at all on `gemini-2.5-pro` or the Gemini 3.x models.
 - **Providers that reject the parameter are handled automatically.** OpenAI's `gpt-4.1` family returns a 400 for `reasoning_effort`. Layer 3 detects that specific rejection, retries once without the parameter, and remembers the endpoint/model pair — so the default OpenAI setup costs one extra request per run, not per batch.
 - **Free tiers generally train on submitted prompts.** Layer 3 sends source and test diffs. Check the provider's data-use terms before pointing this at a private repository.
 
@@ -222,8 +222,8 @@ Notes that decide whether these actually work:
 | `ai-api-key` | _(empty)_ | API key for `ai-base-url`; pass it as a secret. Layer 3 is skipped when empty. |
 | `ai-reasoning-effort` | `none` | Thinking budget for reasoning models: `none`, `minimal`, `low`, `medium`, `high`. Empty omits the parameter. Gemini 3.x has no `none` — use `minimal` or above. |
 | `ai-temperature` | `0.1` | Sampling temperature. Gemini 3.x wants `1.0`; lowering it there causes looping per Google's docs. |
-| `ai-max-tokens` | `8192` | Output cap per request. Raise alongside `ai-reasoning-effort`. |
-| `ai-input-token-limit` | `8000` | Prompt budget: drives batching and how much diff evidence survives. Raise on large-context providers. |
+| `ai-max-output-tokens` | `8192` | Output cap per request. Raise alongside `ai-reasoning-effort`. |
+| `ai-max-input-tokens` | `8000` | Prompt budget: drives batching and how much diff evidence survives. Raise on large-context providers. |
 | `ai-confidence-threshold` | `0.7` | AI FAIL verdicts below this confidence become WARNING. Float, `0.0`–`1.0`; other values fail the run. |
 
 **Default exclude patterns:**

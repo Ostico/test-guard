@@ -828,14 +828,14 @@ class TestTruncationWarning:
             system_prompt="system",
             user_prompt="user",
             token="sk-fake",
-            max_tokens=8192,
+            max_output_tokens=8192,
         )
 
         assert result == ""
         out = capsys.readouterr().out
         assert "::warning::" in out
         assert "8192-token output cap" in out
-        assert "ai-max-tokens" in out
+        assert "ai-max-output-tokens" in out
 
     @patch("src.layer3_ai.OpenAI")
     def test_no_warning_on_a_normal_verdict(self, mock_openai: MagicMock, capsys):
@@ -859,7 +859,7 @@ class TestTruncationWarning:
 
 class TestMaxTokens:
     @patch("src.layer3_ai.OpenAI")
-    def test_forwards_max_tokens(self, mock_openai: MagicMock):
+    def test_forwards_max_output_tokens(self, mock_openai: MagicMock):
         """Headroom for a thought trace is configurable, not hardcoded."""
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value.choices = []
@@ -870,7 +870,7 @@ class TestMaxTokens:
             system_prompt="system",
             user_prompt="user",
             token="sk-fake",
-            max_tokens=16384,
+            max_output_tokens=16384,
         )
 
         assert mock_client.chat.completions.create.call_args.kwargs["max_tokens"] == 16384
@@ -2201,8 +2201,8 @@ class TestRunLayer3Batching:
 class TestTokenBudgetConstants:
     """Pin the token budget constants to their corrected values."""
 
-    def test_input_token_limit(self):
-        assert layer3_ai._INPUT_TOKEN_LIMIT == 8000
+    def test_max_input_tokens(self):
+        assert layer3_ai._MAX_INPUT_TOKENS == 8000
 
     def test_chars_per_token(self):
         assert layer3_ai._CHARS_PER_TOKEN == 3
@@ -2219,7 +2219,7 @@ class TestTokenBudgetConstants:
 
     def test_budget_leaves_headroom_for_system_prompt(self):
         total = layer3_ai._SYSTEM_OVERHEAD_TOKENS + layer3_ai._USER_PROMPT_TOKEN_BUDGET
-        assert total < layer3_ai._INPUT_TOKEN_LIMIT
+        assert total < layer3_ai._MAX_INPUT_TOKENS
 
 
 # ---------------------------------------------------------------------------

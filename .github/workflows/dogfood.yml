@@ -62,7 +62,7 @@ jobs:
           # 8000 was sized for the retired GitHub Models 8K input cap.
           # Gemini has a 1M context, and at 8000 a large test diff is shed,
           # which makes the model warn about code it was never shown.
-          ai-input-token-limit: '32000'
+          ai-max-input-tokens: '32000'
           # Repo-specific: benchmarks/ is a standalone perf harness, not product
           # code under test. Kept OUT of the shipped defaults on purpose — a
           # test-adequacy gate should not silently skip a code tree for every
@@ -97,7 +97,7 @@ jobs:
           # 8000 was sized for the retired GitHub Models 8K input cap.
           # Gemini has a 1M context, and at 8000 a large test diff is shed,
           # which makes the model warn about code it was never shown.
-          ai-input-token-limit: '32000'
+          ai-max-input-tokens: '32000'
           # Repo-specific: benchmarks/ is a standalone perf harness, not product
           # code under test. Kept OUT of the shipped defaults on purpose — a
           # test-adequacy gate should not silently skip a code tree for every
