@@ -32,6 +32,7 @@ from unidiff import PatchSet
 from unidiff.errors import UnidiffParseError
 
 from src.config import DEFAULT_AI_BASE_URL as _DEFAULT_AI_BASE_URL
+from src.config import DEFAULT_AI_INPUT_TOKEN_LIMIT as _DEFAULT_AI_INPUT_TOKEN_LIMIT
 from src.config import DEFAULT_AI_MAX_TOKENS as _DEFAULT_AI_MAX_TOKENS
 from src.config import DEFAULT_AI_REASONING_EFFORT as _DEFAULT_AI_REASONING_EFFORT
 from src.config import DEFAULT_AI_TEMPERATURE as _DEFAULT_AI_TEMPERATURE
@@ -241,7 +242,11 @@ def _build_ai_prompt(
     coverage_details: dict[str, float] | None,
     coverage_threshold: float,
     matched_tests: dict[str, str | list[str] | None],
-    max_diff_chars: int = 10_000,
+    # Both resolved at call time rather than as def-time defaults: max_diff_chars
+    # is derived from token_budget, and the budget constant is defined further
+    # down this module, so a def-time default would NameError.
+    max_diff_chars: int | None = None,
+    token_budget: int | None = None,
 ) -> str:
     """Build the structured Markdown user prompt for the AI batch.
 
@@ -256,6 +261,17 @@ def _build_ai_prompt(
     """
     if not files_for_ai:
         return ""
+
+    if token_budget is None:
+        token_budget = _user_prompt_budget()
+    # Two independent truncations guard the prompt: this per-diff character cap
+    # and the whole-diff shedding below. Raising only the token budget changes
+    # nothing while the char cap still clips every large diff, so derive the cap
+    # from the budget — half of it, leaving room for other files in the batch,
+    # and never below the historical 10k floor. An explicit value always wins:
+    # the 413 retry passes a deliberately smaller cap to shrink the request.
+    if max_diff_chars is None:
+        max_diff_chars = max(10_000, token_budget * _CHARS_PER_TOKEN // 2)
 
     # Build a reverse map: test file → list of source files it is matched to.
     # Used to annotate each test diff in the prompt so the AI knows which
@@ -327,7 +343,7 @@ def _build_ai_prompt(
     # input cap even when the aggregate test payload is large. The evidence
     # banner (recomputed in assemble) tells the model what was dropped.
     kept = list(test_entries)
-    while kept and _estimate_tokens(assemble(kept)) > _USER_PROMPT_TOKEN_BUDGET:
+    while kept and _estimate_tokens(assemble(kept)) > token_budget:
         victim = max(kept, key=lambda e: (bool(e["is_candidate"]), int(e["cost"])))
         kept.remove(victim)
     return assemble(kept)
@@ -618,12 +634,21 @@ _DEFAULT_FALLBACK_CHAIN: tuple[str, ...] = (
 _REASONING_EFFORT_UNSUPPORTED: set[tuple[str, str]] = set()
 
 _CHARS_PER_TOKEN = 3
-_INPUT_TOKEN_LIMIT = 8000
+_INPUT_TOKEN_LIMIT = _DEFAULT_AI_INPUT_TOKEN_LIMIT
 _SYSTEM_OVERHEAD_TOKENS = 800   # system prompt + JSON schema overhead
 _SAFETY_FACTOR = 0.85
-_USER_PROMPT_TOKEN_BUDGET = int(
-    (_INPUT_TOKEN_LIMIT - _SYSTEM_OVERHEAD_TOKENS) * _SAFETY_FACTOR
-)  # = 6120 tokens
+
+
+def _user_prompt_budget(input_token_limit: int = _INPUT_TOKEN_LIMIT) -> int:
+    """Tokens available for the user prompt at a given input budget.
+
+    Subtracts the system prompt and schema, then applies a safety factor
+    because token counts here are estimated from characters, not measured.
+    """
+    return int((input_token_limit - _SYSTEM_OVERHEAD_TOKENS) * _SAFETY_FACTOR)
+
+
+_USER_PROMPT_TOKEN_BUDGET = _user_prompt_budget()  # = 6120 tokens at 8000
 _FILE_ENTRY_OVERHEAD_TOKENS = 25  # markdown headers, code fences per file
 _BATCH_OVERHEAD_TOKENS = 30       # section headers per batch prompt
 _RETRY_MAX_DIFF_CHARS = 3000      # tighter truncation on 413 retry
@@ -832,6 +857,7 @@ def _call_ai_for_batch(
     reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
     temperature: float = _DEFAULT_AI_TEMPERATURE,
     max_tokens: int = _DEFAULT_AI_MAX_TOKENS,
+    input_token_limit: int = _DEFAULT_AI_INPUT_TOKEN_LIMIT,
 ) -> tuple[str | None, Exception | None]:
     """Call the AI for a single batch with one model.
 
@@ -842,9 +868,11 @@ def _call_ai_for_batch(
     batch_test_diffs = _filter_test_diffs_for_batch(
         batch_files, test_diffs, matched_tests,
     )
+    token_budget = _user_prompt_budget(input_token_limit)
     user_prompt = _build_ai_prompt(
         batch_files, source_diffs, batch_test_diffs,
         coverage_details, coverage_threshold, matched_tests,
+        token_budget=token_budget,
     )
     try:
         raw = _call_ai_provider(
@@ -858,6 +886,7 @@ def _call_ai_for_batch(
                 batch_files, source_diffs, batch_test_diffs,
                 coverage_details, coverage_threshold, matched_tests,
                 max_diff_chars=_RETRY_MAX_DIFF_CHARS,
+                token_budget=token_budget,
             )
             try:
                 raw = _call_ai_provider(
@@ -1005,6 +1034,7 @@ def run_layer3(
     reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
     temperature: float = _DEFAULT_AI_TEMPERATURE,
     max_tokens: int = _DEFAULT_AI_MAX_TOKENS,
+    input_token_limit: int = _DEFAULT_AI_INPUT_TOKEN_LIMIT,
 ) -> LayerResult:
     """Run the full Layer 3 evaluation pipeline.
 
@@ -1118,6 +1148,7 @@ def run_layer3(
                         coverage_details, coverage_threshold, l2_matched_tests,
                         models[current_model_idx], system_prompt, token,
                         base_url, reasoning_effort, temperature, max_tokens,
+                        input_token_limit,
                     )
                     if raw is not None:
                         _, ai_confidence, batch_verdicts = _parse_ai_response(raw)

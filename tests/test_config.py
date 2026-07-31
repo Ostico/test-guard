@@ -82,6 +82,29 @@ class TestParseConfig:
         assert "::warning::" in out
         assert "ai-temperature" in out
 
+    def test_input_token_limit_is_configurable(self, monkeypatch):
+        """Raising the prompt budget is how large test diffs stop being shed."""
+        monkeypatch.setenv("INPUT_AI-INPUT-TOKEN-LIMIT", "32000")
+        monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        assert parse_config().ai_input_token_limit == 32000
+
+    def test_invalid_input_token_limit_falls_back(self, monkeypatch, capsys):
+        monkeypatch.setenv("INPUT_AI-INPUT-TOKEN-LIMIT", "huge")
+        monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake123")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+        cfg = parse_config()
+        assert cfg.ai_input_token_limit == 8000
+        out = capsys.readouterr().out
+        assert "::warning::" in out
+        assert "ai-input-token-limit" in out
+
     def test_invalid_max_tokens_falls_back(self, monkeypatch, capsys):
         monkeypatch.setenv("INPUT_AI-MAX-TOKENS", "lots")
         monkeypatch.setenv("INPUT_AI-API-KEY", "sk-fake")

@@ -49,6 +49,9 @@ inputs:
   ai-max-tokens:
     description: 'Output token cap per request. Thought tokens are charged against it, and exhausting it returns finish_reason=length with empty content, which is reported as a warning. Raise it if you raise ai-reasoning-effort. Gemini 3.x permits up to 65536.'
     default: '8192'
+  ai-input-token-limit:
+    description: 'Budget for the prompt Layer 3 sends, which drives batching and how much diff evidence survives. The default 8000 was sized for the retired GitHub Models 8K input cap; raise it (e.g. 32000) on a large-context provider so big test diffs are not shed, at the cost of more tokens per minute. Also scales the per-diff character cap.'
+    default: '8000'
   ai-confidence-threshold:
     description: 'Minimum AI confidence to enforce fail verdict (0.0-1.0). Below this, fail becomes warning.'
     default: '0.7'
@@ -81,6 +84,7 @@ runs:
         INPUT_AI-REASONING-EFFORT: ${{ inputs.ai-reasoning-effort }}
         INPUT_AI-TEMPERATURE: ${{ inputs.ai-temperature }}
         INPUT_AI-MAX-TOKENS: ${{ inputs.ai-max-tokens }}
+        INPUT_AI-INPUT-TOKEN-LIMIT: ${{ inputs.ai-input-token-limit }}
         INPUT_AI-CONFIDENCE-THRESHOLD: ${{ inputs.ai-confidence-threshold }}
         PYTHONPATH: ${{ github.action_path }}
       run: python ${{ github.action_path }}/src/main.py

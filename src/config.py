@@ -46,6 +46,14 @@ DEFAULT_AI_TEMPERATURE = 0.1
 # It stays well under the 65536 Gemini 3.x allows, because thought tokens are
 # billed as output and burn free-tier tokens/minute.
 DEFAULT_AI_MAX_TOKENS = 8192
+# Client-side budget for the prompt we send, which drives batching and decides
+# how much diff evidence survives. 8000 was sized for GitHub Models' retired 8K
+# input cap, and it is now the binding constraint on evidence quality: a test
+# diff larger than the budget gets shed, and the prompt instructs the model to
+# treat omitted code as untested, producing false warnings. It stays
+# conservative by default because providers meter tokens per minute — Groq's
+# free tier allows only 8K/min — so raise it deliberately per provider.
+DEFAULT_AI_INPUT_TOKEN_LIMIT = 8000
 _DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.7
 _DEFAULT_AI_ENABLED_VALUES = ("true", "1", "yes")
 
@@ -217,6 +225,7 @@ class Config:
     ai_reasoning_effort: str = DEFAULT_AI_REASONING_EFFORT
     ai_temperature: float = DEFAULT_AI_TEMPERATURE
     ai_max_tokens: int = DEFAULT_AI_MAX_TOKENS
+    ai_input_token_limit: int = DEFAULT_AI_INPUT_TOKEN_LIMIT
 
 
 def _parse_custom_test_patterns(raw: str) -> dict[str, dict[str, str]]:
@@ -363,6 +372,16 @@ def parse_config() -> Config:
             f"falling back to {DEFAULT_AI_MAX_TOKENS}."
         )
         ai_max_tokens = DEFAULT_AI_MAX_TOKENS
+
+    input_limit_raw = _env("AI-INPUT-TOKEN-LIMIT", str(DEFAULT_AI_INPUT_TOKEN_LIMIT))
+    try:
+        ai_input_token_limit = int(input_limit_raw)
+    except ValueError:
+        print(
+            f"::warning::Invalid ai-input-token-limit '{input_limit_raw}' — "
+            f"falling back to {DEFAULT_AI_INPUT_TOKEN_LIMIT}."
+        )
+        ai_input_token_limit = DEFAULT_AI_INPUT_TOKEN_LIMIT
     if ai_enabled and not ai_api_key:
         print(
             "::warning::ai-enabled is true but ai-api-key is empty — Layer 3 "
@@ -401,5 +420,6 @@ def parse_config() -> Config:
         ai_reasoning_effort=ai_reasoning_effort,
         ai_temperature=ai_temperature,
         ai_max_tokens=ai_max_tokens,
+        ai_input_token_limit=ai_input_token_limit,
         ai_confidence_threshold=ai_confidence_threshold,
     )

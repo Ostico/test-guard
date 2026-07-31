@@ -247,6 +247,7 @@ class TestRunPipeline:
             reasoning_effort="none",
             temperature=0.1,
             max_tokens=8192,
+            input_token_limit=8000,
             confidence_threshold=0.7,
             unmeasurable_files=set(),
         )

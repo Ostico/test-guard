@@ -145,6 +145,28 @@ jobs:
 
 > No special GitHub permission is needed for AI analysis — the old `models: read` scope only ever gated GitHub Models and is now inert. What Layer 3 needs is `ai-api-key`. Set `ai-enabled: 'false'` to run Layers 1–2 only.
 
+### Provider settings at a glance
+
+Every AI input in one place. Copy the column for your provider.
+
+| Setting | OpenAI (default) | Google Gemini | Azure AI Foundry | Groq (free) |
+|:--------|:-----------------|:--------------|:-----------------|:------------|
+| `ai-base-url` | `https://api.openai.com/v1` | `https://generativelanguage.googleapis.com/v1beta/openai/` | `https://<resource>.services.ai.azure.com/openai/v1` | `https://api.groq.com/openai/v1` |
+| `ai-model` | `gpt-4.1-mini` | `gemini-3.1-flash-lite` | your deployment name | `openai/gpt-oss-120b` |
+| `ai-api-key` | `OPENAI_API_KEY` | `GEMINI_API_KEY` | Foundry key | `GROQ_API_KEY` |
+| `ai-reasoning-effort` | `none` (stripped automatically) | `low` | depends on model | `low` |
+| `ai-temperature` | `0.1` | **`1.0`** | `0.1` | `0.1` |
+| `ai-max-tokens` | `8192` | `8192` | `8192` | `8192` |
+| `ai-input-token-limit` | `8000` | `32000` | `32000` | **`8000`** |
+| Strict `json_schema` | yes | yes | yes | gpt-oss only |
+
+Why the non-obvious values:
+
+- **Gemini `ai-temperature: '1.0'`** — Google documents its default as strongly recommended and warns that lowering it causes looping or degraded reasoning. The `0.1` default suits OpenAI-style models and is actively wrong here.
+- **Gemini `ai-input-token-limit: '32000'`** — a 1M-token context window makes the `8000` default needlessly tight, and a shed test diff produces false warnings (see below).
+- **Groq stays at `8000`** — its free tier allows only 8K tokens *per minute*, so a larger prompt trips 429s, and Layer 3 has no 429 backoff.
+- **OpenAI `ai-reasoning-effort`** — `gpt-4.1` rejects the parameter with a 400; Layer 3 detects that, retries once without it, and remembers the endpoint/model pair.
+
 ### Pointing at another provider
 
 `ai-base-url` takes any OpenAI-compatible `/v1` endpoint. Use the model ID *that provider* expects.
@@ -201,6 +223,7 @@ Notes that decide whether these actually work:
 | `ai-reasoning-effort` | `none` | Thinking budget for reasoning models: `none`, `minimal`, `low`, `medium`, `high`. Empty omits the parameter. Gemini 3.x has no `none` — use `minimal` or above. |
 | `ai-temperature` | `0.1` | Sampling temperature. Gemini 3.x wants `1.0`; lowering it there causes looping per Google's docs. |
 | `ai-max-tokens` | `8192` | Output cap per request. Raise alongside `ai-reasoning-effort`. |
+| `ai-input-token-limit` | `8000` | Prompt budget: drives batching and how much diff evidence survives. Raise on large-context providers. |
 | `ai-confidence-threshold` | `0.7` | AI FAIL verdicts below this confidence become WARNING. Float, `0.0`–`1.0`; other values fail the run. |
 
 **Default exclude patterns:**

@@ -147,6 +147,7 @@ def run_pipeline(config: Config) -> Report:
         reasoning_effort=config.ai_reasoning_effort,
         temperature=config.ai_temperature,
         max_tokens=config.ai_max_tokens,
+        input_token_limit=config.ai_input_token_limit,
         confidence_threshold=config.ai_confidence_threshold,
         # L1 proved these are instrumented but contributed no executable changed
         # lines, so Gate 2 skips them instead of Gate 4 failing them at 0%.

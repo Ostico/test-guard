@@ -775,6 +775,40 @@ class TestTemperature:
         assert mock_client.chat.completions.create.call_args.kwargs["temperature"] == 0.1
 
 
+class TestInputTokenBudget:
+    """The input budget decides how much test evidence survives into the prompt.
+
+    Shed test diffs make the prompt's evidence-completeness rule kick in, and
+    the model correctly returns a warning for code it cannot see tested — so a
+    budget that is too small manufactures false warnings.
+    """
+
+    def test_budget_scales_with_the_limit(self):
+        assert layer3_ai._user_prompt_budget(8000) == 6120
+        assert layer3_ai._user_prompt_budget(32000) == 26520
+
+    def test_raised_limit_keeps_a_large_test_diff(self):
+        big_test_diff = "+ assert something\n" * 1200  # ~22k chars, ~7.6k tokens
+
+        shed = layer3_ai._build_ai_prompt(
+            ["src/thing.py"],
+            {"src/thing.py": "+ def thing(): pass"},
+            {"tests/test_thing.py": big_test_diff},
+            None, 80, {"src/thing.py": "tests/test_thing.py"},
+            token_budget=layer3_ai._user_prompt_budget(8000),
+        )
+        kept = layer3_ai._build_ai_prompt(
+            ["src/thing.py"],
+            {"src/thing.py": "+ def thing(): pass"},
+            {"tests/test_thing.py": big_test_diff},
+            None, 80, {"src/thing.py": "tests/test_thing.py"},
+            token_budget=layer3_ai._user_prompt_budget(32000),
+        )
+
+        # The raised budget must retain strictly more evidence.
+        assert len(kept) > len(shed)
+
+
 class TestTruncationWarning:
     """A thought trace that eats the output cap must not degrade silently."""
 

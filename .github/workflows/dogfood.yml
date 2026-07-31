@@ -59,6 +59,10 @@ jobs:
           # Gemini 3.x warns that lowering temperature causes looping and
           # degraded reasoning, so use its recommended default instead of 0.1.
           ai-temperature: '1.0'
+          # 8000 was sized for the retired GitHub Models 8K input cap.
+          # Gemini has a 1M context, and at 8000 a large test diff is shed,
+          # which makes the model warn about code it was never shown.
+          ai-input-token-limit: '32000'
           # Repo-specific: benchmarks/ is a standalone perf harness, not product
           # code under test. Kept OUT of the shipped defaults on purpose — a
           # test-adequacy gate should not silently skip a code tree for every
@@ -90,6 +94,10 @@ jobs:
           # Gemini 3.x warns that lowering temperature causes looping and
           # degraded reasoning, so use its recommended default instead of 0.1.
           ai-temperature: '1.0'
+          # 8000 was sized for the retired GitHub Models 8K input cap.
+          # Gemini has a 1M context, and at 8000 a large test diff is shed,
+          # which makes the model warn about code it was never shown.
+          ai-input-token-limit: '32000'
           # Repo-specific: benchmarks/ is a standalone perf harness, not product
           # code under test. Kept OUT of the shipped defaults on purpose — a
           # test-adequacy gate should not silently skip a code tree for every
