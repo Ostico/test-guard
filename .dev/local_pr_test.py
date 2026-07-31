@@ -23,6 +23,12 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
+
+# Running this file directly puts .dev/ on sys.path, not the repo root, so the
+# src.* imports below fail. In CI action.yml sets PYTHONPATH; here we bootstrap
+# it so `python .dev/local_pr_test.py` works from anywhere.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import _DEFAULT_EXCLUDE, _DEFAULT_TEST_PATTERNS, Config
 from src.github_api import create_session
