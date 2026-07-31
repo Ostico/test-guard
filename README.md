@@ -163,16 +163,19 @@ GitHub no longer offers free inference. Copilot Pro remains [free for verified o
 
 Third-party free tiers do work here:
 
-| Provider | `ai-base-url` | Free tier |
-|:---------|:--------------|:----------|
-| Groq | `https://api.groq.com/openai/v1` | No card required; ~30 RPM, 1,000–14,400 requests/day depending on model |
-| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | Low daily quota, tightened in Dec 2025 |
-| OpenRouter | `https://openrouter.ai/api/v1` | `:free` model variants |
+**Layer 3 requires strict structured output.** It sends `response_format=json_schema` with `strict: true`. A model that does not support strict constrained decoding rejects the request, and because Layer 3 only retries on 413 and only falls back on 403, the batch is abandoned with a `::warning::` and those files defer to Layer 1 + Layer 2 — a working gate with no AI analysis. Check strict support before picking a free model.
 
-Two caveats before you rely on one:
+| Provider | `ai-base-url` | `ai-model` | Free-tier limits |
+|:---------|:--------------|:-----------|:-----------------|
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.5-flash-lite` | Per-model quotas are shown in [AI Studio](https://aistudio.google.com/rate-limit); token/min is roomy |
+| Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | 30 RPM, 1,000 req/day, **8K tokens/min**, 200K tokens/day |
 
-- **Strict structured output is required.** Layer 3 requests `response_format=json_schema` with `strict: true`. Models without strict support reject the call, and the batch falls back to Layer 1 + Layer 2 — a working gate with no AI analysis. Groq supports it only on selected models; on OpenRouter it varies per model; Gemini supports it on synchronous chat completions.
-- **Free tiers usually train on your prompts.** Layer 3 sends source and test diffs. Check the provider's data-use terms before pointing this at a private repository.
+Notes that decide whether these actually work:
+
+- **On Groq, only `openai/gpt-oss-20b` and `openai/gpt-oss-120b` support `strict: true`.** Other Groq models — including `moonshotai/kimi-k2-instruct-0905` — offer best-effort JSON or tool-use only, and will fail Layer 3's strict call.
+- **Groq's 8K tokens/minute free cap is tight for this workload.** Layer 3 budgets up to 8K input tokens per request, so one full-size batch can consume the entire per-minute allowance and the next batch 429s. Layer 3 has no 429 backoff, so a large PR degrades to L1+L2. Fine for small PRs; unreliable for big ones.
+- **Prefer a non-thinking Gemini model.** `gemini-2.5-flash` has thinking on by default and billing counts thought tokens as output; Layer 3 caps `max_tokens` at 2048, so a long thought trace risks truncating the JSON (which parses as SKIP, confidence 0.0). `gemini-2.5-flash-lite` defaults to thinking off. Layer 3 does not currently send `reasoning_effort`, so this is not tunable from the action.
+- **Free tiers generally train on submitted prompts.** Layer 3 sends source and test diffs. Check the provider's data-use terms before pointing this at a private repository.
 
 ---
 
