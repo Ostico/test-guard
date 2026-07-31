@@ -245,6 +245,7 @@ class TestRunPipeline:
             token="sk-fake",
             base_url="https://api.openai.com/v1",
             reasoning_effort="none",
+            temperature=0.1,
             confidence_threshold=0.7,
             unmeasurable_files=set(),
         )

@@ -32,6 +32,11 @@ DEFAULT_AI_BASE_URL = "https://api.openai.com/v1"
 # trace and truncating the JSON verdict. Providers that reject the parameter
 # get it stripped automatically (see layer3_ai). Empty string never sends it.
 DEFAULT_AI_REASONING_EFFORT = "none"
+# 0.1 suits OpenAI-style models for a deterministic classification. Gemini 3.x
+# documents the opposite: it recommends its default of 1.0 and warns that
+# lowering temperature can cause looping or degraded reasoning, so that
+# provider needs this raised.
+DEFAULT_AI_TEMPERATURE = 0.1
 _DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.7
 _DEFAULT_AI_ENABLED_VALUES = ("true", "1", "yes")
 
@@ -201,6 +206,7 @@ class Config:
     ai_base_url: str = DEFAULT_AI_BASE_URL
     ai_api_key: str = ""
     ai_reasoning_effort: str = DEFAULT_AI_REASONING_EFFORT
+    ai_temperature: float = DEFAULT_AI_TEMPERATURE
 
 
 def _parse_custom_test_patterns(raw: str) -> dict[str, dict[str, str]]:
@@ -328,6 +334,15 @@ def parse_config() -> Config:
     # retired on 2026-07-30 and a GitHub token authenticates nothing else.
     ai_api_key = _env("AI-API-KEY", "")
     ai_reasoning_effort = _env("AI-REASONING-EFFORT", DEFAULT_AI_REASONING_EFFORT)
+    temperature_raw = _env("AI-TEMPERATURE", str(DEFAULT_AI_TEMPERATURE))
+    try:
+        ai_temperature = float(temperature_raw)
+    except ValueError:
+        print(
+            f"::warning::Invalid ai-temperature '{temperature_raw}' — "
+            f"falling back to {DEFAULT_AI_TEMPERATURE}."
+        )
+        ai_temperature = DEFAULT_AI_TEMPERATURE
     if ai_enabled and not ai_api_key:
         print(
             "::warning::ai-enabled is true but ai-api-key is empty — Layer 3 "
@@ -364,5 +379,6 @@ def parse_config() -> Config:
         ai_base_url=ai_base_url,
         ai_api_key=ai_api_key,
         ai_reasoning_effort=ai_reasoning_effort,
+        ai_temperature=ai_temperature,
         ai_confidence_threshold=ai_confidence_threshold,
     )

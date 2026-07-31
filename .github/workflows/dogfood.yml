@@ -36,15 +36,21 @@ jobs:
         with:
           coverage-file: coverage.xml
           coverage-threshold: '100'
-          ai-model: 'gemini-2.5-flash'
+          # Gemini 2.5 was shut down ahead of its documented Oct 2026 date and
+          # now 404s. flash-lite defaults to minimal thinking, which suits the
+          # 2048-token output cap.
+          ai-model: 'gemini-3.1-flash-lite'
           # Trailing slash is required — without it the compat layer 404s.
           ai-base-url: 'https://generativelanguage.googleapis.com/v1beta/openai/'
           # Layer 3 needs a provider key. Absent the secret, the gate degrades
           # to Layer 1 + Layer 2 with a warning instead of failing.
           ai-api-key: ${{ secrets.GEMINI_API_KEY }}
-          # Explicit though it is the default: thinking must stay off, or a
-          # thought trace can eat the 2048-token budget and truncate the JSON.
-          ai-reasoning-effort: 'none'
+          # Gemini 3.x has no "off" for thinking; minimal is the floor and
+          # keeps a thought trace from eating the output budget.
+          ai-reasoning-effort: 'minimal'
+          # Gemini 3.x warns that lowering temperature causes looping and
+          # degraded reasoning, so use its recommended default instead of 0.1.
+          ai-temperature: '1.0'
           # Repo-specific: benchmarks/ is a standalone perf harness, not product
           # code under test. Kept OUT of the shipped defaults on purpose — a
           # test-adequacy gate should not silently skip a code tree for every

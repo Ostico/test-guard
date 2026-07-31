@@ -33,6 +33,7 @@ from unidiff.errors import UnidiffParseError
 
 from src.config import DEFAULT_AI_BASE_URL as _DEFAULT_AI_BASE_URL
 from src.config import DEFAULT_AI_REASONING_EFFORT as _DEFAULT_AI_REASONING_EFFORT
+from src.config import DEFAULT_AI_TEMPERATURE as _DEFAULT_AI_TEMPERATURE
 from src.diff_utils import is_trivial_diff
 from src.models import FileVerdict, LayerResult, Verdict
 
@@ -828,6 +829,7 @@ def _call_ai_for_batch(
     token: str,
     base_url: str = _DEFAULT_AI_BASE_URL,
     reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
+    temperature: float = _DEFAULT_AI_TEMPERATURE,
 ) -> tuple[str | None, Exception | None]:
     """Call the AI for a single batch with one model.
 
@@ -845,7 +847,7 @@ def _call_ai_for_batch(
     try:
         raw = _call_ai_provider(
             model, system_prompt, user_prompt, token, base_url,
-            reasoning_effort,
+            reasoning_effort, temperature,
         )
         return raw, None
     except Exception as exc:
@@ -872,6 +874,7 @@ def _call_ai_provider(
     token: str,
     base_url: str = _DEFAULT_AI_BASE_URL,
     reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
+    temperature: float = _DEFAULT_AI_TEMPERATURE,
 ) -> str:
     """Call an OpenAI-compatible inference endpoint, return raw response text.
 
@@ -898,12 +901,12 @@ def _call_ai_provider(
         extra["reasoning_effort"] = reasoning_effort
 
     try:
-        response = _create_completion(client, model, messages, extra)
+        response = _create_completion(client, model, messages, extra, temperature)
     except Exception as exc:
         if not extra or not _is_unsupported_reasoning_effort_error(exc):
             raise
         _REASONING_EFFORT_UNSUPPORTED.add((base_url, model))
-        response = _create_completion(client, model, messages, {})
+        response = _create_completion(client, model, messages, {}, temperature)
 
     if not response.choices:
         return ""
@@ -915,12 +918,13 @@ def _create_completion(
     model: str,
     messages: list[object],
     extra: dict[str, object],
+    temperature: float = _DEFAULT_AI_TEMPERATURE,
 ) -> object:
     """Issue the chat-completion request, with ``extra`` merged into kwargs."""
     return client.chat.completions.create(
         model=model,
         messages=messages,
-        temperature=0.1,
+        temperature=temperature,
         max_tokens=2048,
         response_format=ResponseFormatJSONSchema(
             type="json_schema",
@@ -982,6 +986,7 @@ def run_layer3(
     unmeasurable_files: set[str] | None = None,
     base_url: str = _DEFAULT_AI_BASE_URL,
     reasoning_effort: str = _DEFAULT_AI_REASONING_EFFORT,
+    temperature: float = _DEFAULT_AI_TEMPERATURE,
 ) -> LayerResult:
     """Run the full Layer 3 evaluation pipeline.
 
@@ -1094,7 +1099,7 @@ def run_layer3(
                         batch, source_diffs, test_diffs,
                         coverage_details, coverage_threshold, l2_matched_tests,
                         models[current_model_idx], system_prompt, token,
-                        base_url, reasoning_effort,
+                        base_url, reasoning_effort, temperature,
                     )
                     if raw is not None:
                         _, ai_confidence, batch_verdicts = _parse_ai_response(raw)

@@ -90,14 +90,15 @@ def run_local(repo: str, pr_number: int) -> None:
         test_patterns=_DEFAULT_TEST_PATTERNS,
         exclude_patterns=exclude_patterns,
         ai_enabled=True,
-        ai_model=os.environ.get("AI_MODEL", "gemini-2.5-flash"),
+        ai_model=os.environ.get("AI_MODEL", "gemini-3.1-flash-lite"),
         ai_confidence_threshold=0.7,
         ai_base_url=os.environ.get(
             "AI_BASE_URL",
             "https://generativelanguage.googleapis.com/v1beta/openai/",
         ),
         ai_api_key=_resolve_ai_api_key(),
-        ai_reasoning_effort=os.environ.get("AI_REASONING_EFFORT", "none"),
+        ai_reasoning_effort=os.environ.get("AI_REASONING_EFFORT", "minimal"),
+        ai_temperature=float(os.environ.get("AI_TEMPERATURE", "1.0")),
     )
 
     session = create_session(token)
@@ -166,6 +167,7 @@ def run_local(repo: str, pr_number: int) -> None:
         token=config.ai_api_key,
         base_url=config.ai_base_url,
         reasoning_effort=config.ai_reasoning_effort,
+        temperature=config.ai_temperature,
         confidence_threshold=config.ai_confidence_threshold,
     )
     report.layers.append(l3)

@@ -43,6 +43,9 @@ inputs:
   ai-reasoning-effort:
     description: 'Thinking budget for reasoning models: none, minimal, low, medium, high. Defaults to none so a thought trace cannot consume the output budget and truncate the JSON verdict. Set to an empty string to omit the parameter entirely; providers that reject it (OpenAI gpt-4.1 family) have it stripped automatically.'
     default: 'none'
+  ai-temperature:
+    description: 'Sampling temperature. 0.1 suits OpenAI-style models for a deterministic verdict. Gemini 3.x recommends its default of 1.0 and warns that lowering it can cause looping or degraded reasoning — set 1.0 for those models.'
+    default: '0.1'
   ai-confidence-threshold:
     description: 'Minimum AI confidence to enforce fail verdict (0.0-1.0). Below this, fail becomes warning.'
     default: '0.7'
@@ -73,6 +76,7 @@ runs:
         INPUT_AI-BASE-URL: ${{ inputs.ai-base-url }}
         INPUT_AI-API-KEY: ${{ inputs.ai-api-key }}
         INPUT_AI-REASONING-EFFORT: ${{ inputs.ai-reasoning-effort }}
+        INPUT_AI-TEMPERATURE: ${{ inputs.ai-temperature }}
         INPUT_AI-CONFIDENCE-THRESHOLD: ${{ inputs.ai-confidence-threshold }}
         PYTHONPATH: ${{ github.action_path }}
       run: python ${{ github.action_path }}/src/main.py

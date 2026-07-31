@@ -741,6 +741,40 @@ class TestReasoningEffort:
         assert mock_client.chat.completions.create.call_count == 1
 
 
+class TestTemperature:
+    @patch("src.layer3_ai.OpenAI")
+    def test_forwards_temperature(self, mock_openai: MagicMock):
+        """Gemini 3.x needs 1.0 — lower values cause looping per Google's docs."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value.choices = []
+        mock_openai.return_value = mock_client
+
+        _call_ai_provider(
+            model="gemini-3.1-flash-lite",
+            system_prompt="system",
+            user_prompt="user",
+            token="sk-fake",
+            temperature=1.0,
+        )
+
+        assert mock_client.chat.completions.create.call_args.kwargs["temperature"] == 1.0
+
+    @patch("src.layer3_ai.OpenAI")
+    def test_defaults_to_deterministic_temperature(self, mock_openai: MagicMock):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value.choices = []
+        mock_openai.return_value = mock_client
+
+        _call_ai_provider(
+            model="gpt-4.1-mini",
+            system_prompt="system",
+            user_prompt="user",
+            token="sk-fake",
+        )
+
+        assert mock_client.chat.completions.create.call_args.kwargs["temperature"] == 0.1
+
+
 class TestCallAiProvider:
     @patch("src.layer3_ai.OpenAI")
     def test_uses_configured_base_url(self, mock_openai: MagicMock):
