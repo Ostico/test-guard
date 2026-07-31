@@ -36,10 +36,15 @@ jobs:
         with:
           coverage-file: coverage.xml
           coverage-threshold: '100'
-          ai-model: 'gpt-4.1-mini'
+          ai-model: 'gemini-2.5-flash'
+          # Trailing slash is required — without it the compat layer 404s.
+          ai-base-url: 'https://generativelanguage.googleapis.com/v1beta/openai/'
           # Layer 3 needs a provider key. Absent the secret, the gate degrades
           # to Layer 1 + Layer 2 with a warning instead of failing.
-          ai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          ai-api-key: ${{ secrets.GEMINI_API_KEY }}
+          # Explicit though it is the default: thinking must stay off, or a
+          # thought trace can eat the 2048-token budget and truncate the JSON.
+          ai-reasoning-effort: 'none'
           # Repo-specific: benchmarks/ is a standalone perf harness, not product
           # code under test. Kept OUT of the shipped defaults on purpose — a
           # test-adequacy gate should not silently skip a code tree for every
