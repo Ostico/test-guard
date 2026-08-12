@@ -137,7 +137,7 @@ jobs:
         run: pytest --cov --cov-report=xml  # your test command
 
       - name: Test-Guard
-        uses: ostico/test-guard@v1
+        uses: ostico/test-guard@v2
         with:
           coverage-file: coverage.xml
           ai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -266,7 +266,7 @@ So a PR that only adds fields to a TypeScript `interface` passes without weakeni
 `test-patterns` defaults to `auto`, which uses the built-in mappings for 19 languages. To teach Test-Guard a project-specific test layout, pass a **JSON object**. Each entry maps an arbitrary id to a `src_pattern` (glob identifying a source file) and a `test_template` (glob for the expected test, with a `{name}` placeholder for the source file's stem):
 
 ```yaml
-- uses: ostico/test-guard@v1
+- uses: ostico/test-guard@v2
   with:
     test-patterns: |
       {
@@ -492,20 +492,20 @@ When tests run inside a Docker container (or any environment with a different fi
 
 ### Coverage + heuristics + AI (default)
 ```yaml
-- uses: ostico/test-guard@v1
+- uses: ostico/test-guard@v2
   with:
     coverage-file: coverage.xml
 ```
 
 ### Heuristics + AI only (no coverage file)
 ```yaml
-- uses: ostico/test-guard@v1
+- uses: ostico/test-guard@v2
 # Layer 1 skips, Layer 3 shortcuts use test relevance only
 ```
 
 ### Heuristics only (no AI)
 ```yaml
-- uses: ostico/test-guard@v1
+- uses: ostico/test-guard@v2
   with:
     ai-enabled: 'false'
 # Layer 2 becomes the gate (short-circuits on all-PASS)
@@ -513,7 +513,7 @@ When tests run inside a Docker container (or any environment with a different fi
 
 ### Strict threshold with AI
 ```yaml
-- uses: ostico/test-guard@v1
+- uses: ostico/test-guard@v2
   with:
     coverage-file: coverage.xml
     coverage-threshold: '95'
@@ -522,7 +522,7 @@ When tests run inside a Docker container (or any environment with a different fi
 
 ### Multiple coverage files (e.g. PHP + JS)
 ```yaml
-- uses: ostico/test-guard@v1
+- uses: ostico/test-guard@v2
   with:
     coverage-file: |
       php-coverage.xml
