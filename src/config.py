@@ -176,6 +176,40 @@ def _env_required(name: str) -> str:
     return val
 
 
+def _pr_number_from_event() -> int | None:
+    """Read the PR number from the event payload GitHub writes for the run.
+
+    Every pull_request payload carries `.pull_request.number`, for every
+    activity type, which GITHUB_REF does not.
+
+    Returns None rather than raising for anything unexpected — no payload path,
+    an unreadable or malformed file, a payload for some other event, a number
+    that is not one. The caller still has GITHUB_REF to fall back on, and a
+    raise here would turn a recoverable case into a failed run.
+
+    Returns:
+        The PR number, or None if the payload does not yield one.
+    """
+    path = os.environ.get("GITHUB_EVENT_PATH")
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    pull_request = payload.get("pull_request")
+    if not isinstance(pull_request, dict):
+        return None
+    number = pull_request.get("number")
+    # bool is an int subclass, and `true` is valid JSON in that position.
+    if isinstance(number, bool) or not isinstance(number, int):
+        return None
+    return number
+
+
 @dataclass(frozen=True)
 class Config:
     """Parsed and validated configuration from GitHub Actions inputs.
@@ -305,10 +339,15 @@ def parse_config() -> Config:
     repo = _env_required("GITHUB_REPOSITORY")
     event_name = os.environ.get("GITHUB_EVENT_NAME", "unknown")
 
-    # Extract PR number from GITHUB_REF (refs/pull/<number>/merge)
-    pr_number = None
+    # The event payload first, GITHUB_REF only as a fallback. Every
+    # pull_request payload carries .pull_request.number, whereas GITHUB_REF is
+    # refs/pull/<number>/merge only while GitHub has a merge ref to point the
+    # run at. When it points elsewhere the run used to abort with "Could not
+    # determine PR number" having measured nothing, which reads to the author
+    # as a coverage verdict on code the action never looked at.
+    pr_number = _pr_number_from_event()
     github_ref = os.environ.get("GITHUB_REF", "")
-    match = re.search(r"refs/pull/(\d+)/", github_ref)
+    match = None if pr_number is not None else re.search(r"refs/pull/(\d+)/", github_ref)
     if match:
         pr_number = int(match.group(1))
 

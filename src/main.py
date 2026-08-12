@@ -197,7 +197,11 @@ def main() -> None:
         return
 
     if config.pr_number is None:
-        print("::error::Could not determine PR number from GITHUB_REF.")
+        print(
+            "::error::Could not determine the PR number from either the event payload "
+            "at GITHUB_EVENT_PATH or GITHUB_REF. Nothing was measured, so this is not a "
+            "test-adequacy verdict."
+        )
         sys.exit(1)
 
     try:
