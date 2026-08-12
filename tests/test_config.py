@@ -1,6 +1,8 @@
 # pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownMemberType=false
 """Tests for configuration parsing."""
 
+import json
+
 import pytest
 
 from src.config import parse_config
@@ -217,8 +219,81 @@ class TestParseConfig:
         monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
         monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
         monkeypatch.setenv("GITHUB_REF", "refs/pull/42/merge")
+        # This suite runs inside Actions too, where GITHUB_EVENT_PATH points at a
+        # real payload naming a real PR. Without this the assertion below would
+        # measure that PR instead of the ref under test.
+        monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
         cfg = parse_config()
         assert cfg.pr_number == 42
+
+    def test_pr_number_from_event_payload_when_the_ref_has_none(self, monkeypatch, tmp_path):
+        # The case the action used to abort on: a pull_request event whose ref is
+        # not refs/pull/<n>/merge. Observed on the `edited` activity type, where
+        # the run failed with "Could not determine PR number" without having
+        # measured anything.
+        payload = tmp_path / "event.json"
+        payload.write_text(json.dumps({"pull_request": {"number": 180}}), encoding="utf-8")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(payload))
+        assert parse_config().pr_number == 180
+
+    def test_the_event_payload_wins_over_the_ref(self, monkeypatch, tmp_path):
+        # The payload describes the event being processed; the ref is a pointer
+        # that may lag it. When they disagree, the payload is the one to trust.
+        payload = tmp_path / "event.json"
+        payload.write_text(json.dumps({"pull_request": {"number": 180}}), encoding="utf-8")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.setenv("GITHUB_REF", "refs/pull/42/merge")
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(payload))
+        assert parse_config().pr_number == 180
+
+    @pytest.mark.parametrize(
+        "payload_text",
+        [
+            pytest.param('{"pull_request": {"number": ', id="truncated json"),
+            pytest.param("not json at all", id="not json"),
+            pytest.param('{"push": {"ref": "refs/heads/main"}}', id="another event"),
+            pytest.param('{"pull_request": null}', id="null pull_request"),
+            pytest.param('{"pull_request": {"number": "180"}}', id="number as a string"),
+            pytest.param('{"pull_request": {"number": true}}', id="number as a boolean"),
+            pytest.param('{"pull_request": {}}', id="no number"),
+            pytest.param("[]", id="payload is a list"),
+        ],
+    )
+    def test_an_unusable_event_payload_falls_back_to_the_ref(
+        self, monkeypatch, tmp_path, payload_text
+    ):
+        # None of these may raise. Each still has a usable ref, and a raise here
+        # would turn a recoverable run into a failed one.
+        payload = tmp_path / "event.json"
+        payload.write_text(payload_text, encoding="utf-8")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.setenv("GITHUB_REF", "refs/pull/42/merge")
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(payload))
+        assert parse_config().pr_number == 42
+
+    def test_a_missing_event_file_falls_back_to_the_ref(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.setenv("GITHUB_REF", "refs/pull/42/merge")
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(tmp_path / "absent.json"))
+        assert parse_config().pr_number == 42
+
+    def test_no_pr_number_when_neither_source_has_one(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+        monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+        monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
+        assert parse_config().pr_number is None
 
     def test_coverage_threshold_range_validation(self, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
