@@ -1,8 +1,5 @@
 # 🧪 Test-Guard
 
-[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-❤️-ea4aaa?logo=github)](https://github.com/sponsors/Ostico)
-[![Donate via PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://paypal.me/Ostico)
-
 ![Unique views](https://views.ostico.dev/c/C5oIMk2HNRydbttW)
 [![CI](https://github.com/Ostico/test-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/Ostico/test-guard/actions/workflows/ci.yml)
 
