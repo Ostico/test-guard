@@ -1,6 +1,6 @@
 # 🧪 Test-Guard
 
-![Unique views](https://views.ostico.dev/c/C5oIMk2HNRydbttW)
+![Unique views](https://tallyviews.ostico.dev/c/C5oIMk2HNRydbttW)
 [![CI](https://github.com/Ostico/test-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/Ostico/test-guard/actions/workflows/ci.yml)
 
 
