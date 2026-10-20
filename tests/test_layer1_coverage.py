@@ -48,6 +48,27 @@ _CLOVER_JEST_STYLE = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+# Jest clover run from a subdirectory: path= is relative to it, not to the repo root.
+_CLOVER_JEST_SUBDIR_STYLE = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000" clover="3.2.0">
+  <project timestamp="1700000000" name="All files">
+    <file name="ok.js" path="src/ok.js"><line num="1" count="1" type="stmt"/></file>
+    <file name="a.js" path="src/a.js"><line num="1" count="1" type="stmt"/></file>
+  </project>
+</coverage>
+"""
+
+# b.js sits under a container root the prefix detector strips; a.js under another root.
+_CLOVER_TWO_ROOTS = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000" clover="3.2.0">
+  <project timestamp="1700000000" name="All files">
+    <file name="b.js" path="/var/www/app/src/b.js"><line num="1" count="1" type="stmt"/></file>
+    <file name="a.js" path="{other_root}/src/a.js"><line num="1" count="1" type="stmt"/></file>
+  </project>
+</coverage>
+"""
+
+
 class TestConstants:
     def test_diff_cover_timeout_value(self):
         assert _DIFF_COVER_TIMEOUT == 60
@@ -205,6 +226,61 @@ class TestRunLayer1:
         assert result.verdict == Verdict.PASS
         assert result.short_circuit is True
         assert result.unmeasurable_files == {"src/bruno/types.ts"}
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_suffix_only_report_path_warns_of_mismatch(self, mock_cov, tmp_path, capsys):
+        # Regression, Jest clover, container path, MateCat PR #4927: path= is
+        # relative to a subdirectory, so diff-cover cannot match it to the git
+        # path even though the report mentions the file.
+        cov = tmp_path / "js-coverage.xml"
+        cov.write_text(_CLOVER_JEST_SUBDIR_STYLE)
+        mock_cov.return_value = (100.0, {"app/src/ok.js": 100.0}, "")
+        result = run_layer1(
+            coverage_files=[str(cov)],
+            threshold=80,
+            diff_files=["app/src/ok.js", "app/src/a.js"],
+        )
+        out = capsys.readouterr().out
+        assert "::warning::Coverage path mismatch: app/src/a.js" in out
+        assert "'src/a.js'" in out
+        assert result.unmeasurable_files == {"app/src/a.js"}
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_exact_report_path_does_not_warn(self, mock_cov, tmp_path, capsys):
+        # Regression guard, Jest clover, container path, MateCat PR #4927: a
+        # report path equal to the git path is genuinely "nothing to measure".
+        cov = tmp_path / "clover.xml"
+        cov.write_text(_CLOVER_WITH_TYPES)
+        mock_cov.return_value = (100.0, {"src/bruno/request.ts": 100.0}, "")
+        run_layer1(
+            coverage_files=[str(cov)],
+            threshold=95,
+            diff_files=["src/bruno/request.ts", "src/bruno/types.ts"],
+        )
+        assert "path mismatch" not in capsys.readouterr().out
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_unstripped_foreign_root_warns(self, mock_cov, tmp_path, capsys):
+        # Regression, Jest clover, container path, MateCat PR #4927: a second
+        # container root survives prefix stripping and never reaches diff-cover.
+        cov = tmp_path / "js-coverage.xml"
+        cov.write_text(_CLOVER_TWO_ROOTS.format(other_root="/srv/other"))
+        mock_cov.return_value = (100.0, {"src/b.js": 100.0}, "")
+        run_layer1(coverage_files=[str(cov)], threshold=80, diff_files=["src/b.js", "src/a.js"])
+        assert "'/srv/other/src/a.js'" in capsys.readouterr().out
+
+    @patch("src.layer1_coverage._compute_diff_coverage")
+    def test_report_path_under_checkout_does_not_warn(
+        self, mock_cov, tmp_path, monkeypatch, capsys
+    ):
+        # Regression guard, Jest clover, container path, MateCat PR #4927: an
+        # absolute path under the checkout resolves in diff-cover, so no warning.
+        monkeypatch.chdir(tmp_path)
+        cov = tmp_path / "js-coverage.xml"
+        cov.write_text(_CLOVER_TWO_ROOTS.format(other_root=tmp_path.resolve().as_posix()))
+        mock_cov.return_value = (100.0, {"src/b.js": 100.0}, "")
+        run_layer1(coverage_files=[str(cov)], threshold=80, diff_files=["src/b.js", "src/a.js"])
+        assert "path mismatch" not in capsys.readouterr().out
 
     @patch("src.layer1_coverage._compute_diff_coverage")
     def test_absent_and_missing_from_report_still_fails(self, mock_cov, tmp_path):

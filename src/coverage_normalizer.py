@@ -358,10 +358,22 @@ def is_in_report(diff_file: str, reported_files: set[str]) -> bool:
     """
     if diff_file in reported_files:
         return True
+    return find_suffix_only_match(diff_file, reported_files) is not None
+
+
+def find_suffix_only_match(diff_file: str, reported_files: set[str]) -> str | None:
+    """Return a reported path that matches a git path only by suffix, else None.
+
+    Same two suffix directions as is_in_report(). A consumer that compares
+    paths exactly (diff-cover does for Clover) cannot match such a file, so
+    "in the report" says nothing about it having been measured.
+    """
+    if diff_file in reported_files:
+        return None
     needle = "/" + diff_file
-    for reported in reported_files:
+    for reported in sorted(reported_files):
         if reported.endswith(needle):
-            return True
+            return reported
         if "/" in reported and diff_file.endswith("/" + reported):
-            return True
-    return False
+            return reported
+    return None

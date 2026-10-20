@@ -258,6 +258,8 @@ The two compose: the final exclude set is `exclude-patterns ∪ extra-exclude-pa
 
 So a PR that only adds fields to a TypeScript `interface` passes without weakening the gate: add real logic to that same file later and its executable lines are measured and gated as usual.
 
+For Clover reports, diff-cover matches paths exactly. If the report mentions a changed file only under a longer or shorter path (a second container root, or a path relative to a subdirectory), the file still passes as above, but Test-Guard emits a `::warning::Coverage path mismatch` annotation: its changed lines were not actually measured.
+
 ### Custom test patterns
 
 `test-patterns` defaults to `auto`, which uses the built-in mappings for 19 languages. To teach Test-Guard a project-specific test layout, pass a **JSON object**. Each entry maps an arbitrary id to a `src_pattern` (glob identifying a source file) and a `test_template` (glob for the expected test, with a `{name}` placeholder for the source file's stem):
@@ -476,7 +478,7 @@ When tests run inside a Docker container (or any environment with a different fi
 
 | Format | How it works |
 |:-------|:-------------|
-| **Clover** | Reads `<file name="...">` paths, suffix-matches against PR file list to detect the container prefix (e.g., `/var/www/app/`), rewrites paths to relative. |
+| **Clover** | Reads the absolute one of `<file name="...">` (PHPUnit) and `<file path="...">` (Jest, which keeps only the basename in `name`), suffix-matches against PR file list to detect the container prefix (e.g., `/var/www/app/`), rewrites paths to relative. |
 | **Cobertura** | Checks `<class filename="...">` — if absolute, detects the prefix and rewrites to relative. If already relative (e.g., pytest-cov output), no action. |
 | **JaCoCo** | Uses diff-cover's built-in `--src-roots` handling. |
 | **LCOV** | No XML normalization possible — ensure paths are relative in your LCOV output. |
