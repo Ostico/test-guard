@@ -15,7 +15,10 @@ import subprocess
 from pathlib import Path
 
 from src.coverage_normalizer import (
+    CoverageFormat,
+    detect_format,
     extract_reported_files,
+    find_suffix_only_match,
     is_in_report,
     normalize_coverage_file,
 )
@@ -148,8 +151,12 @@ def run_layer1(
         # src_stats. Used below to tell "nothing to measure" apart from
         # "never instrumented".
         reported_files: set[str] = set()
+        clover_reported: set[str] = set()
         for nf in normalized_files:
-            reported_files |= extract_reported_files(nf)
+            paths = extract_reported_files(nf)
+            reported_files |= paths
+            if detect_format(nf) == CoverageFormat.CLOVER:
+                clover_reported |= paths
     finally:
         # Clean up temp files created by normalization
         for nf, vf in zip(normalized_files, valid_files, strict=True):
@@ -229,6 +236,15 @@ def run_layer1(
             layer="layer1",
         ))
     for f in unmeasurable_absent:
+        # diff-cover matches Clover paths exactly, so a report path that only
+        # suffix-matches the git path was never measured, whatever "no
+        # executable lines changed" suggests. Paths under the checkout resolve.
+        stale = find_suffix_only_match(f, clover_reported)
+        if stale and not stale.startswith(Path.cwd().as_posix() + "/"):
+            print(
+                f"::warning::Coverage path mismatch: {f} is in the report as '{stale}', "
+                f"a path diff-cover cannot match; its changed lines were not measured"
+            )
         file_verdicts.append(FileVerdict(
             file=f,
             verdict=Verdict.PASS,

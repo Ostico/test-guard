@@ -17,6 +17,9 @@ coverage.xml
 htmlcov/
 *.lcov
 
+# Local code graph
+.code-review-graph/
+
 # Design docs (local only)
 TODO.md
 
