@@ -3,6 +3,7 @@
 import os
 import subprocess
 from unittest.mock import patch
+from xml.etree import ElementTree as ET
 
 from src.layer1_coverage import (
     _DIFF_COVER_TIMEOUT,
@@ -640,3 +641,41 @@ class TestDockerPathNormalization:
         cmd = mock_run.call_args[0][0]
         # Should use original file (no rewriting)
         assert cmd[1] == str(cov)
+
+    @patch("src.layer1_coverage.subprocess.run")
+    def test_jest_container_paths_reach_diff_cover_normalized(self, mock_run, tmp_path):
+        """Regression, Jest clover, container path, MateCat PR #4927: diff-cover
+        must receive path= with the container prefix stripped, so the changed
+        file gets its real verdict instead of 'no executable lines changed'."""
+        cov = tmp_path / "js-coverage.xml"
+        cov.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000" clover="3.2.0">
+  <project timestamp="1700000000" name="All files">
+    <file name="a.js" path="/var/www/app/src/a.js">
+      <line num="4" count="12" type="stmt"/>
+    </file>
+  </project>
+</coverage>""")
+        received: list[str | None] = []
+
+        def fake_run(cmd, **kwargs):
+            # The normalized temp file is deleted once run_layer1 returns.
+            file_elem = ET.parse(cmd[1]).find(".//file")  # noqa: S314
+            received.append(None if file_elem is None else file_elem.get("path"))
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=(
+                    '{"total_percent_covered": 90.0, "src_stats": '
+                    '{"src/a.js": {"percent_covered": 90.0}}}'
+                ),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+        result = run_layer1([str(cov)], threshold=80, diff_files=["src/a.js"])
+
+        assert received == ["src/a.js"]
+        fv = next(f for f in result.file_verdicts if f.file == "src/a.js")
+        assert fv.verdict == Verdict.PASS
+        assert "no executable lines changed" not in fv.reason

@@ -92,12 +92,20 @@ def detect_path_prefix(xml_paths: list[str], diff_files: list[str]) -> str:
 
 
 def _extract_clover_paths(root: ET.Element) -> list[str]:
-    """Extract all file paths from a Clover XML tree."""
+    """Extract all file paths from a Clover XML tree.
+
+    Returns, per <file>, whichever attribute is an absolute path: PHPUnit
+    qualifies name=, Jest qualifies path= and leaves a basename in name=.
+    Prefix detection needs the qualified one; with neither, name= wins.
+    """
     paths: list[str] = []
     for file_elem in root.findall(".//file"):
-        name = file_elem.get("name") or file_elem.get("path") or ""
-        if name:
-            paths.append(name)
+        name = file_elem.get("name") or ""
+        path = file_elem.get("path") or ""
+        absolute = next((p for p in (name, path) if _is_absolute_path(p)), "")
+        chosen = absolute or name or path
+        if chosen:
+            paths.append(chosen)
     return paths
 
 

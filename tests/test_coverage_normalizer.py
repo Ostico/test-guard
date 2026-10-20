@@ -883,3 +883,109 @@ class TestParseFailureFallbacks:
             return_value=CoverageFormat.CLOVER,
         ):
             assert normalize_coverage_file(str(report), ["src/foo.py"]) == str(report)
+
+
+# Jest clover produced in a container: basename in name=, container path in path=.
+_CLOVER_JEST_CONTAINER_REPORT = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000" clover="3.2.0">
+  <project timestamp="1700000000" name="All files">
+    <file name="a.js" path="/var/www/app/src/a.js">
+      <line num="4" count="12" type="stmt"/>
+    </file>
+    <file name="b.js" path="/var/www/app/src/lib/b.js">
+      <line num="7" count="0" type="stmt"/>
+    </file>
+  </project>
+</coverage>
+"""
+
+# Jest clover whose path= is already git-relative.
+_CLOVER_JEST_RELATIVE_REPORT = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000" clover="3.2.0">
+  <project timestamp="1700000000" name="All files">
+    <file name="a.js" path="src/a.js">
+      <line num="4" count="12" type="stmt"/>
+    </file>
+  </project>
+</coverage>
+"""
+
+# One file qualified through name= (PHPUnit shape), one only through path= (Jest shape).
+_CLOVER_MIXED_REPORT = """<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1700000000" clover="3.2.0">
+  <project timestamp="1700000000">
+    <file name="/var/www/app/lib/Auth.php">
+      <line num="10" type="stmt" count="1"/>
+    </file>
+    <file name="a.js" path="/var/www/app/src/a.js">
+      <line num="4" count="12" type="stmt"/>
+    </file>
+  </project>
+</coverage>
+"""
+
+
+class TestCloverContainerPathPrefix:
+    def test_jest_container_path_is_stripped(self, tmp_path, capsys):
+        # Regression, Jest clover, container path, MateCat PR #4927: name= is a
+        # basename, so the prefix has to come from path=.
+        report = tmp_path / "js-coverage.xml"
+        report.write_text(_CLOVER_JEST_CONTAINER_REPORT)
+        result = normalize_coverage_file(str(report), ["src/a.js"])
+        assert result != str(report)
+        files = ET.parse(result).findall(".//file")  # noqa: S314
+        assert [f.get("path") for f in files] == ["src/a.js", "src/lib/b.js"]
+        assert "stripped prefix '/var/www/app/'" in capsys.readouterr().out
+
+    def test_real_jest_report_from_container_is_normalized(self, capsys):
+        # Regression, Jest clover, container path, MateCat PR #4927: the real
+        # report of the 4 changed files, reduced from CI run 39423022273.
+        report = Path(__file__).parent / "fixtures" / "jest_clover_container_paths.xml"
+        diff_files = [
+            "public/js/actions/ModalsActions.js",
+            "public/js/api/confirmSplitRequest/confirmSplitRequest.js",
+            "public/js/api/mergeJobChunks/mergeJobChunks.js",
+            "public/js/components/modals/SplitJob.js",
+        ]
+        result = normalize_coverage_file(str(report), diff_files)
+        assert result != str(report)
+        paths = [f.get("path") for f in ET.parse(result).findall(".//file")]  # noqa: S314
+        assert sorted(paths) == diff_files
+        assert "stripped prefix '/var/www/matecat/'" in capsys.readouterr().out
+
+    def test_jest_relative_path_returns_original(self, tmp_path):
+        # Regression guard, Jest clover, container path, MateCat PR #4927: nothing
+        # to strip when path= is already git-relative.
+        report = tmp_path / "js-coverage.xml"
+        report.write_text(_CLOVER_JEST_RELATIVE_REPORT)
+        assert normalize_coverage_file(str(report), ["src/a.js"]) == str(report)
+
+    def test_jest_path_without_shared_prefix_returns_original(self, tmp_path):
+        # Regression guard, Jest clover, container path, MateCat PR #4927: a path=
+        # that matches no diff file yields no prefix, so the report is untouched.
+        report = tmp_path / "js-coverage.xml"
+        report.write_text(_CLOVER_JEST_CONTAINER_REPORT)
+        assert normalize_coverage_file(str(report), ["lib/other.js"]) == str(report)
+
+    def test_phpunit_name_still_wins_and_is_copied_to_path(self, tmp_path):
+        # Regression guard, Jest clover, container path, MateCat PR #4927: PHPUnit
+        # keeps reading name=, and _rewrite_clover() still copies it into path=.
+        report = tmp_path / "clover.xml"
+        report.write_text(_CLOVER_PHPUNIT_REPORT)
+        result = normalize_coverage_file(str(report), ["lib/AuthCookie.php"])
+        file_elem = ET.parse(result).find(".//file")  # noqa: S314
+        assert file_elem is not None
+        assert file_elem.get("name") == "lib/AuthCookie.php"
+        assert file_elem.get("path") == "lib/AuthCookie.php"
+
+    def test_mixed_name_and_path_shapes_share_one_prefix(self, tmp_path, capsys):
+        # Regression, Jest clover, container path, MateCat PR #4927: one report
+        # with an absolute name= file and a path=-only file gets one prefix.
+        report = tmp_path / "clover.xml"
+        report.write_text(_CLOVER_MIXED_REPORT)
+        result = normalize_coverage_file(str(report), ["lib/Auth.php", "src/a.js"])
+        files = ET.parse(result).findall(".//file")  # noqa: S314
+        assert [f.get("path") for f in files] == ["lib/Auth.php", "src/a.js"]
+        assert files[0].get("name") == "lib/Auth.php"
+        assert files[1].get("name") == "a.js"
+        assert "stripped prefix '/var/www/app/'" in capsys.readouterr().out
